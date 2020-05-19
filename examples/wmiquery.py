@@ -1,5 +1,5 @@
-#!/usr/bin/python
-# Copyright (c) 2003-2016 CORE Security Technologies
+#!/usr/bin/env python
+# SECUREAUTH LABS. Copyright 2018 SecureAuth Corporation. All rights reserved.
 #
 # This software is provided under under a slightly modified version
 # of the Apache Software License. See the accompanying LICENSE file
@@ -17,6 +17,8 @@
 # Reference for:
 #  DCOM
 #
+from __future__ import division
+from __future__ import print_function
 import argparse
 import sys
 import os
@@ -27,7 +29,7 @@ from impacket import version
 from impacket.dcerpc.v5.dtypes import NULL
 from impacket.dcerpc.v5.dcom import wmi
 from impacket.dcerpc.v5.dcomrt import DCOMConnection
-from impacket.dcerpc.v5.rpcrt import RPC_C_AUTHN_LEVEL_PKT_PRIVACY, RPC_C_AUTHN_LEVEL_PKT_INTEGRITY, RPC_C_AUTHN_LEVEL_NONE
+from impacket.dcerpc.v5.rpcrt import RPC_C_AUTHN_LEVEL_PKT_PRIVACY, RPC_C_AUTHN_LEVEL_PKT_INTEGRITY
 
 if __name__ == '__main__':
     import cmd
@@ -40,12 +42,12 @@ if __name__ == '__main__':
             self.intro = '[!] Press help for extra shell commands'
 
         def do_help(self, line):
-            print """
+            print("""
      lcd {path}                 - changes the current local directory to {path}
      exit                       - terminates the server process (and this session)
      describe {class}           - describes class
      ! {cmd}                    - executes a local shell cmd
-     """ 
+     """) 
 
         def do_shell(self, s):
             os.system(s)
@@ -58,14 +60,15 @@ if __name__ == '__main__':
                 iObject, _ = self.iWbemServices.GetObject(sClass)
                 iObject.printInformation()
                 iObject.RemRelease()
-            except Exception, e:
-                #import traceback
-                #print traceback.print_exc()
+            except Exception as e:
+                if logging.getLogger().level == logging.DEBUG:
+                    import traceback
+                    traceback.print_exc()
                 logging.error(str(e))
 
         def do_lcd(self, s):
             if s == '':
-                print os.getcwd()
+                print(os.getcwd())
             else:
                 os.chdir(s)
     
@@ -76,18 +79,24 @@ if __name__ == '__main__':
                     pEnum = iEnum.Next(0xffffffff,1)[0]
                     record = pEnum.getProperties()
                     if printHeader is True:
-                        print '|', 
+                        print('|', end=' ')
                         for col in record:
-                            print '%s |' % col,
-                        print
+                            print('%s |' % col, end=' ')
+                        print()
                         printHeader = False
-                    print '|', 
+                    print('|', end=' ') 
                     for key in record:
-                        print '%s |' % record[key]['value'],
-                    print 
-                except Exception, e:
-                    #import traceback
-                    #print traceback.print_exc()
+                        if type(record[key]['value']) is list:
+                            for item in record[key]['value']:
+                                print(item, end=' ')
+                            print(' |', end=' ')
+                        else:
+                            print('%s |' % record[key]['value'], end=' ')
+                    print() 
+                except Exception as e:
+                    if logging.getLogger().level == logging.DEBUG:
+                        import traceback
+                        traceback.print_exc()
                     if str(e).find('S_FALSE') < 0:
                         raise
                     else:
@@ -102,7 +111,7 @@ if __name__ == '__main__':
                 iEnumWbemClassObject = self.iWbemServices.ExecQuery(line.strip('\n'))
                 self.printReply(iEnumWbemClassObject)
                 iEnumWbemClassObject.RemRelease()
-            except Exception, e:
+            except Exception as e:
                 logging.error(str(e))
          
         def emptyline(self):
@@ -113,9 +122,10 @@ if __name__ == '__main__':
 
     # Init the example's logger theme
     logger.init()
-    print version.BANNER
+    print(version.BANNER)
 
-    parser = argparse.ArgumentParser(add_help = True, description = "Executes WQL queries and gets object descriptions using Windows Management Instrumentation.")
+    parser = argparse.ArgumentParser(add_help = True, description = "Executes WQL queries and gets object descriptions "
+                                                                    "using Windows Management Instrumentation.")
     parser.add_argument('target', action='store', help='[[domain/]username[:password]@]<targetName or address>')
     parser.add_argument('-namespace', action='store', default='//./root/cimv2', help='namespace name (default //./root/cimv2)')
     parser.add_argument('-file', type=argparse.FileType('r'), help='input file with commands to execute in the WQL shell')
@@ -125,9 +135,17 @@ if __name__ == '__main__':
 
     group.add_argument('-hashes', action="store", metavar = "LMHASH:NTHASH", help='NTLM hashes, format is LMHASH:NTHASH')
     group.add_argument('-no-pass', action="store_true", help='don\'t ask for password (useful for -k)')
-    group.add_argument('-k', action="store_true", help='Use Kerberos authentication. Grabs credentials from ccache file (KRB5CCNAME) based on target parameters. If valid credentials cannot be found, it will use the ones specified in the command line')
-    group.add_argument('-aesKey', action="store", metavar = "hex key", help='AES key to use for Kerberos Authentication (128 or 256 bits)')
-    group.add_argument('-rpc-auth-level', choices=['integrity', 'privacy','default'], nargs='?', default='default', help='default, integrity (RPC_C_AUTHN_LEVEL_PKT_INTEGRITY) or privacy (RPC_C_AUTHN_LEVEL_PKT_PRIVACY). For example CIM path "root/MSCluster" would require privacy level by default)')
+    group.add_argument('-k', action="store_true", help='Use Kerberos authentication. Grabs credentials from ccache file '
+                       '(KRB5CCNAME) based on target parameters. If valid credentials cannot be found, it will use the '
+                       'ones specified in the command line')
+    group.add_argument('-aesKey', action="store", metavar = "hex key", help='AES key to use for Kerberos Authentication '
+                                                                            '(128 or 256 bits)')
+    group.add_argument('-dc-ip', action='store',metavar = "ip address",  help='IP Address of the domain controller. If '
+                       'ommited it use the domain part (FQDN) specified in the target parameter')
+    group.add_argument('-rpc-auth-level', choices=['integrity', 'privacy','default'], nargs='?', default='default',
+                       help='default, integrity (RPC_C_AUTHN_LEVEL_PKT_INTEGRITY) or privacy '
+                            '(RPC_C_AUTHN_LEVEL_PKT_PRIVACY). For example CIM path "root/MSCluster" would require '
+                            'privacy level by default)')
 
     if len(sys.argv)==1:
         parser.print_help()
@@ -137,11 +155,15 @@ if __name__ == '__main__':
 
     if options.debug is True:
         logging.getLogger().setLevel(logging.DEBUG)
+        # Print the Library's installation path
+        logging.debug(version.getInstallationPath())
     else:
         logging.getLogger().setLevel(logging.INFO)
 
     import re
-    domain, username, password, address = re.compile('(?:(?:([^/@:]*)/)?([^@:]*)(?::([^@]*))?@)?(.*)').match(options.target).groups('')
+
+    domain, username, password, address = re.compile('(?:(?:([^/@:]*)/)?([^@:]*)(?::([^@]*))?@)?(.*)').match(
+        options.target).groups('')
 
     #In case the password contains '@'
     if '@' in address:
@@ -165,7 +187,8 @@ if __name__ == '__main__':
         nthash = ''
 
     try:
-        dcom = DCOMConnection(address, username, password, domain, lmhash, nthash, options.aesKey, oxidResolver = True, doKerberos=options.k)
+        dcom = DCOMConnection(address, username, password, domain, lmhash, nthash, options.aesKey, oxidResolver=True,
+                              doKerberos=options.k, kdcHost=options.dc_ip)
 
         iInterface = dcom.CoCreateInstanceEx(wmi.CLSID_WbemLevel1Login,wmi.IID_IWbemLevel1Login)
         iWbemLevel1Login = wmi.IWbemLevel1Login(iInterface)
@@ -182,15 +205,14 @@ if __name__ == '__main__':
             shell.cmdloop()
         else:
             for line in options.file.readlines():
-                print "WQL> %s" % line,
+                print("WQL> %s" % line, end=' ')
                 shell.onecmd(line)
 
         iWbemServices.RemRelease()
         dcom.disconnect()
-    except Exception, e:
+    except Exception as e:
         logging.error(str(e))
         try:
             dcom.disconnect()
         except:
             pass
-

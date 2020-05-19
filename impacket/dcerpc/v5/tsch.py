@@ -1,4 +1,4 @@
-# Copyright (c) 2003-2016 CORE Security Technologies
+# SECUREAUTH LABS. Copyright 2018 SecureAuth Corporation. All rights reserved.
 #
 # This software is provided under under a slightly modified version
 # of the Apache Software License. See the accompanying LICENSE file
@@ -11,7 +11,7 @@
 #
 #   Best way to learn how to use these calls is to grab the protocol standard
 #   so you understand what the call does, and then read the test case located
-#   at https://github.com/CoreSecurity/impacket/tree/master/impacket/testcases/SMB_RPC
+#   at https://github.com/SecureAuthCorp/impacket/tree/master/tests/SMB_RPC
 #
 #   Some calls have helper functions, which makes it even easier to use.
 #   They are located at the end of this file. 
@@ -33,11 +33,11 @@ class DCERPCSessionError(DCERPCException):
 
     def __str__( self ):
         key = self.error_code
-        if hresult_errors.ERROR_MESSAGES.has_key(key):
+        if key in hresult_errors.ERROR_MESSAGES:
             error_msg_short = hresult_errors.ERROR_MESSAGES[key][0]
             error_msg_verbose = hresult_errors.ERROR_MESSAGES[key][1]
             return 'TSCH SessionError: code: 0x%x - %s - %s' % (self.error_code, error_msg_short, error_msg_verbose)
-        elif system_errors.ERROR_MESSAGES.has_key(key & 0xffff):
+        elif key & 0xffff in system_errors.ERROR_MESSAGES:
             error_msg_short = system_errors.ERROR_MESSAGES[key & 0xffff][0]
             error_msg_verbose = system_errors.ERROR_MESSAGES[key & 0xffff][1]
             return 'TSCH SessionError: code: 0x%x - %s - %s' % (self.error_code, error_msg_short, error_msg_verbose)
@@ -143,6 +143,11 @@ TASK_DISABLE                      = 1<<(31-28)
 TASK_DON_ADD_PRINCIPAL_ACE        = 1<<(31-27)
 TASK_IGNORE_REGISTRATION_TRIGGERS = 1<<(31-26)
 
+# 3.2.5.4.5 SchRpcSetSecurity (Opnum 4)
+TASK_DONT_ADD_PRINCIPAL_ACE = 1<<(31-27)
+SCH_FLAG_FOLDER             = 1<<(31-2)
+SCH_FLAG_TASK               = 1<<(31-1) 
+
 # 3.2.5.4.7 SchRpcEnumFolders (Opnum 6)
 TASK_ENUM_HIDDEN = 1
 
@@ -151,14 +156,6 @@ TASK_RUN_AS_SELF            = 1<<(31-31)
 TASK_RUN_IGNORE_CONSTRAINTS = 1<<(31-30)
 TASK_RUN_USE_SESSION_ID     = 1<<(31-29)
 TASK_RUN_USER_SID           = 1<<(31-28)
-
-class SYSTEMTIME_ARRAY(NDRUniConformantArray):
-    item = SYSTEMTIME
-
-class PSYSTEMTIME_ARRAY(NDRPOINTER):
-    referent = (
-        ('Data',SYSTEMTIME_ARRAY),
-    )
 
 # 3.2.5.4.18 SchRpcGetTaskInfo (Opnum 17)
 SCH_FLAG_STATE            = 1<<(31-3)
@@ -188,7 +185,7 @@ class GUID_ARRAY(NDRUniConformantArray):
 
 class PGUID_ARRAY(NDRPOINTER):
     referent = (
-        ('Data',TASK_NAMES_ARRAY),
+        ('Data',GUID_ARRAY),
     )
 
 # 3.2.5.4.13 SchRpcRun (Opnum 12)
@@ -250,7 +247,7 @@ class FIXDLEN_DATA(Structure):
     )
 
 # 2.4.2.11 Triggers
-class FIXDLEN_DATA(Structure):
+class TRIGGERS(Structure):
     structure = (
         ('Trigger Size','<H=0'),
         ('Reserved1','<H=0'),
@@ -374,6 +371,34 @@ class SchRpcCreateFolder(NDRCALL):
 
 class SchRpcCreateFolderResponse(NDRCALL):
     structure = (
+        ('ErrorCode',ULONG),
+    )
+
+# 3.2.5.4.5 SchRpcSetSecurity (Opnum 4)
+class SchRpcSetSecurity(NDRCALL):
+    opnum = 4
+    structure = (
+        ('path', WSTR),
+        ('sddl', WSTR),
+        ('flags', DWORD),
+    )
+
+class SchRpcSetSecurityResponse(NDRCALL):
+    structure = (
+        ('ErrorCode',ULONG),
+    )
+
+# 3.2.5.4.6 SchRpcGetSecurity (Opnum 5)
+class SchRpcGetSecurity(NDRCALL):
+    opnum = 5
+    structure = (
+        ('path', WSTR),
+        ('securityInformation', DWORD),
+    )
+
+class SchRpcGetSecurityResponse(NDRCALL):
+    structure = (
+        ('sddl',LPWSTR),
         ('ErrorCode',ULONG),
     )
 
@@ -599,6 +624,8 @@ OPNUMS = {
  1 : (SchRpcRegisterTask,SchRpcRegisterTaskResponse ),
  2 : (SchRpcRetrieveTask,SchRpcRetrieveTaskResponse ),
  3 : (SchRpcCreateFolder,SchRpcCreateFolderResponse ),
+ 4 : (SchRpcSetSecurity,SchRpcSetSecurityResponse ),
+ 5 : (SchRpcGetSecurity,SchRpcGetSecurityResponse ),
  6 : (SchRpcEnumFolders,SchRpcEnumFoldersResponse ),
  7 : (SchRpcEnumTasks,SchRpcEnumTasksResponse ),
  8 : (SchRpcEnumInstances,SchRpcEnumInstancesResponse ),
@@ -612,6 +639,7 @@ OPNUMS = {
  16 : (SchRpcGetLastRunInfo,SchRpcGetLastRunInfoResponse ),
  17 : (SchRpcGetTaskInfo,SchRpcGetTaskInfoResponse ),
  18 : (SchRpcGetNumberOfMissedRuns,SchRpcGetNumberOfMissedRunsResponse),
+ 19 : (SchRpcEnableTask,SchRpcEnableTaskResponse),
 }
 
 ################################################################################
@@ -657,6 +685,19 @@ def hSchRpcCreateFolder(dce, path, sddl = NULL):
     schRpcCreateFolder['sddl'] = sddl
     schRpcCreateFolder['flags'] = 0
     return dce.request(schRpcCreateFolder)
+
+def hSchRpcSetSecurity(dce, path, sddl, flags):
+    schRpcSetSecurity = SchRpcSetSecurity()
+    schRpcSetSecurity['path'] = checkNullString(path)
+    schRpcSetSecurity['sddl'] = checkNullString(sddl)
+    schRpcSetSecurity['flags'] = flags
+    return dce.request(schRpcSetSecurity)
+
+def hSchRpcGetSecurity(dce, path, securityInformation=0xffffffff):
+    schRpcGetSecurity = SchRpcGetSecurity()
+    schRpcGetSecurity['path'] = checkNullString(path)
+    schRpcGetSecurity['securityInformation'] = securityInformation
+    return dce.request(schRpcGetSecurity)
 
 def hSchRpcEnumFolders(dce, path, flags=TASK_ENUM_HIDDEN, startIndex=0, cRequested=0xffffffff):
     schRpcEnumFolders = SchRpcEnumFolders()

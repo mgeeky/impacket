@@ -1,4 +1,4 @@
-# Copyright (c) 2003-2016 CORE Security Technologies
+# SECUREAUTH LABS. Copyright 2018 SecureAuth Corporation. All rights reserved.
 #
 # This software is provided under under a slightly modified version
 # of the Apache Software License. See the accompanying LICENSE file
@@ -11,12 +11,10 @@
 #  Gustavo Moreira
 
 import struct
-import string
 from binascii import crc32
 
-from ImpactPacket import ProtocolPacket
-from Dot11Crypto import RC4
-
+from impacket.ImpactPacket import ProtocolPacket
+from impacket.Dot11Crypto import RC4
 frequency = {
     2412: 1,    2417: 2,    2422: 3,    2427: 4,    2432: 5,    2437: 6,    2442: 7,    2447: 8,    2452: 9,
     2457: 10,   2462: 11,   2467: 12,   2472: 13,   2484: 14,   5170: 34,   5180: 36,   5190: 38,   5200: 40,
@@ -467,7 +465,7 @@ class Dot11(ProtocolPacket):
         self.header.set_byte(0, nb)
         
     def compute_checksum(self,bytes):
-        crcle=crc32(bytes)&0xffffffffL
+        crcle=crc32(bytes)&0xffffffff
         # ggrr this crc32 is in little endian, convert it to big endian 
         crc=struct.pack('<L', crcle)
          # Convert to long
@@ -1001,7 +999,7 @@ class SNAP(ProtocolPacket):
         "Get the three-octet Organizationally Unique Identifier (OUI) SNAP frame"
         b=self.header.get_bytes()[0:3].tostring()
         #unpack requires a string argument of length 4 and b is 3 bytes long
-        (oui,)=struct.unpack('!L', '\x00'+b)
+        (oui,)=struct.unpack('!L', b'\x00'+b)
         return oui
 
     def set_OUI(self, value):
@@ -1044,7 +1042,7 @@ class Dot11WEP(ProtocolPacket):
         'Return the \'WEP IV\' field'
         b=self.header.get_bytes()[0:3].tostring()
         #unpack requires a string argument of length 4 and b is 3 bytes long
-        (iv,)=struct.unpack('!L', '\x00'+b)
+        (iv,)=struct.unpack('!L', b'\x00'+b)
         return iv
 
     def set_iv(self, value):
@@ -1125,7 +1123,7 @@ class Dot11WEPData(ProtocolPacket):
         self.tail.set_long(-4, nb)
     
     def get_computed_icv(self):
-        crcle=crc32(self.body_string)&0xffffffffL
+        crcle=crc32(self.body_string)&0xffffffff
         # This crc32 is in little endian, convert it to big endian 
         crc=struct.pack('<L', crcle)
          # Convert to long
@@ -1303,7 +1301,7 @@ class Dot11WPAData(ProtocolPacket):
     def set_MIC(self, value):
         'Set the \'WPA2Data MIC\' field'
         #Padding to 8 bytes with 0x00's 
-        value.ljust(8,'\x00')
+        value.ljust(8,b'\x00')
         #Stripping to 8 bytes
         value=value[:8]
         icv=self.tail.get_buffer_as_string()[-4:] 
@@ -1445,7 +1443,7 @@ class Dot11WPA2Data(ProtocolPacket):
     def set_MIC(self, value):
         'Set the \'WPA2Data MIC\' field'
         #Padding to 8 bytes with 0x00's 
-        value.ljust(8,'\x00')
+        value.ljust(8,b'\x00')
         #Stripping to 8 bytes
         value=value[:8]
         self.tail.set_bytes_from_string(value)
@@ -1460,7 +1458,7 @@ class RadioTap(ProtocolPacket):
 
         def __str__( self ):
             return str( self.__class__.__name__ )
-        
+
     class RTF_TSFT(__RadioTapField):
         BIT_NUMBER = 0
         STRUCTURE = "<Q"
@@ -1469,13 +1467,13 @@ class RadioTap(ProtocolPacket):
     class RTF_FLAGS(__RadioTapField):
         BIT_NUMBER = 1
         STRUCTURE = "<B"
-        
-        # From http://www.radiotap.org/defined-fields/Flags
+
+        # https://web.archive.org/web/20160423125307/www.radiotap.org/defined-fields/Flags
         PROPERTY_CFP            = 0x01 #sent/received during CFP
-        PROPERTY_SHORTPREAMBLE  = 0x02 #sent/received with short preamble 
-        PROPERTY_WEP            = 0x04 #sent/received with WEP encryption 
-        PROPERTY_FRAGMENTATION  = 0x08 #sent/received with fragmentation 
-        PROPERTY_FCS_AT_END     = 0x10 #frame includes FCS 
+        PROPERTY_SHORTPREAMBLE  = 0x02 #sent/received with short preamble
+        PROPERTY_WEP            = 0x04 #sent/received with WEP encryption
+        PROPERTY_FRAGMENTATION  = 0x08 #sent/received with fragmentation
+        PROPERTY_FCS_AT_END     = 0x10 #frame includes FCS
         PROPERTY_PAYLOAD_PADDING= 0x20 #frame has padding between 802.11 header and payload (to 32-bit boundary)
         PROPERTY_BAD_FCS        = 0x40 #does not pass FCS check
         PROPERTY_SHORT_GI       = 0x80 #frame used short guard interval (HT). Unspecified but used:
@@ -1583,8 +1581,8 @@ class RadioTap(ProtocolPacket):
     
     # Sort the list so the 'for' statement walk the list in the right order
     radiotap_fields = __RadioTapField.__subclasses__()
-    radiotap_fields.sort(lambda x, y: cmp(x.BIT_NUMBER,y.BIT_NUMBER))
-    
+    radiotap_fields.sort(key= lambda x: x.BIT_NUMBER)
+
     def __init__(self, aBuffer = None):
         header_size = self.__HEADER_BASE_SIZE 
         tail_size = 0
@@ -1701,7 +1699,7 @@ class RadioTap(ProtocolPacket):
             raise Exception("arg 'values' is not iterable")
         
         # It's for to known the qty of argument of a structure
-        num_fields=len(field.STRUCTURE.translate(string.maketrans("",""), '=@!<>'))
+        num_fields=len(''.join(c for c in field.STRUCTURE if c not in '=@!<>'))
 
         if len(values)!=num_fields:
             raise Exception("Field %s has exactly %d items"%(str(field),struct.calcsize(field.STRUCTURE)))
@@ -1713,8 +1711,7 @@ class RadioTap(ProtocolPacket):
         byte_pos=self.__get_field_position(field)
         header=self.get_header_as_string()
         total_length=struct.calcsize(field.STRUCTURE)
-        v=header[ byte_pos:byte_pos+total_length ]
-        
+
         new_str = struct.pack(field.STRUCTURE, *values)
 
         if is_present is True:
@@ -2048,14 +2045,6 @@ class Dot11ManagementFrame(ProtocolPacket):
         if(aBuffer):
             self.load_packet(aBuffer)
 
-    def __init__(self, aBuffer = None):
-        header_size = 22
-        tail_size = 0
-
-        ProtocolPacket.__init__(self, header_size, tail_size)
-        if(aBuffer):
-            self.load_packet(aBuffer)
-        
     def get_duration(self):
         'Return 802.11 Management frame \'Duration\' field'
         b = self.header.get_word(0, "<")
@@ -2217,14 +2206,14 @@ class Dot11ManagementHelper(ProtocolPacket):
             offset+=length
             if length>remaining:
                 # Error!!
-                length = remaining;
+                length = remaining
             remaining-=length
         # < Not found
         yield (-1, offset, None)
 
     def __calculate_elements_length(self, elements):
         gen_tp=self._find_element(elements, None )
-        (match,offset,length)=gen_tp.next()
+        (match,offset,length)=next(gen_tp)
         if match != -1:
             # element_id is None, then __find_tagged_parameter must return -1
             raise Exception("Internal Error %s"%match)
@@ -2234,7 +2223,7 @@ class Dot11ManagementHelper(ProtocolPacket):
         elements=self.get_header_as_string()[self.__HEADER_BASE_SIZE:]
         gen_tp=self._find_element(elements, element_id )
         while True:
-            (match,offset,length)=gen_tp.next()
+            (match,offset,length)=next(gen_tp)
             if match != 0:
                 return
             value_offset=offset+2
@@ -2245,7 +2234,7 @@ class Dot11ManagementHelper(ProtocolPacket):
     def _get_element(self, element_id):
         gen_get_element=self._get_elements_generator(element_id)
         try:
-            s=gen_get_element.next()
+            s=next(gen_get_element)
             
             if s is None:
                 raise Exception("gen_get_element salio con None in _get_element!!!")
@@ -2262,7 +2251,7 @@ class Dot11ManagementHelper(ProtocolPacket):
         gen_tp=self._find_element(elements, element_id )
         found=False
         while True:
-            (match,offset,length)=gen_tp.next()
+            (match,offset,length)=next(gen_tp)
             if match != 0:
                 break
             start=self.__HEADER_BASE_SIZE+offset
@@ -2285,7 +2274,7 @@ class Dot11ManagementHelper(ProtocolPacket):
         gen_tp=self._find_element(elements, element_id )
         found=False
         while True:
-            (match,offset,length)=gen_tp.next()
+            (match,offset,length)=next(gen_tp)
             start=self.__HEADER_BASE_SIZE+offset
             if match == 0 and replace:
                 # Replace
@@ -2326,14 +2315,14 @@ class Dot11ManagementBeacon(Dot11ManagementHelper):
         self.header.set_long_long(0, nb, "<")
 
     def get_beacon_interval(self):
-        'Return the 802.11 Management Beacon frame \'Beacon Inteval\' field' \
+        'Return the 802.11 Management Beacon frame \'Beacon Interval\' field' \
         'To convert it to seconds =>  secs = Beacon_Interval*1024/1000000'
 
         b = self.header.get_word(8, "<")
         return b 
 
     def set_beacon_interval(self, value):
-        'Set the 802.11 Management Beacon frame \'Beacon Inteval\' field' 
+        'Set the 802.11 Management Beacon frame \'Beacon Interval\' field' 
         # set the bits
         nb = value & 0xFFFF
         self.header.set_word(8, nb, "<")
@@ -2371,7 +2360,7 @@ class Dot11ManagementBeacon(Dot11ManagementHelper):
         if not human_readable:
             return rates
             
-        rates_Mbs=tuple(map(lambda x: (x&0x7F)*0.5,rates))
+        rates_Mbs=tuple([(x&0x7F)*0.5 for x in rates])
         return rates_Mbs
 
     def set_supported_rates(self, rates):
@@ -2415,6 +2404,46 @@ class Dot11ManagementBeacon(Dot11ManagementHelper):
         "Set the 802.11 Management Robust Security Network element."
         self._set_element(DOT11_MANAGEMENT_ELEMENTS.RSN, data)
 
+    def get_erp(self):
+        "Get the 802.11 Management ERP (extended rate PHY) Information element."
+        s = self._get_element(DOT11_MANAGEMENT_ELEMENTS.ERP_INFO)
+        if s is None:
+            return None
+
+        (erp,) = struct.unpack('B',s)
+        
+        return erp
+
+    def set_erp(self, erp):
+        "Set the 802.11 Management ERP (extended rate PHY) Inforamation "\
+        "element."
+        erp_string = struct.pack('B',erp)
+        self._set_element(DOT11_MANAGEMENT_ELEMENTS.ERP_INFO, erp_string)
+
+    def get_country(self):
+        "Get the 802.11 Management Country element." \
+        "Returns a tuple containing Country code, first channel number, "\
+        "number of channels and maximum transmit power level"
+        s = self._get_element(DOT11_MANAGEMENT_ELEMENTS.COUNTRY)
+        if s is None:
+            return None
+
+        code, first, num, max = struct.unpack('3sBBB',s)
+        code = code.strip(' ')
+        return code, first, num, max
+
+    def set_country(self, code, first_channel, number_of_channels, max_power):
+        "Set the 802.11 Management Country element."
+        if len(code) > 3:
+            raise Exception("Country code must be up to 3 bytes long")
+
+        #Padding the country code
+        code += ' ' * (3-len(code))
+
+        country_string = struct.pack('3sBBB', code, first_channel,
+                number_of_channels, max_power)
+        self._set_element(DOT11_MANAGEMENT_ELEMENTS.COUNTRY, country_string)
+
     def get_vendor_specific(self):
         "Get the 802.11 Management Vendor Specific elements "\
         "as a list of tuples."
@@ -2426,7 +2455,7 @@ class Dot11ManagementBeacon(Dot11ManagementHelper):
         gen_get_element=self._get_elements_generator(DOT11_MANAGEMENT_ELEMENTS.VENDOR_SPECIFIC)
         try:
             while 1:
-                s=gen_get_element.next()
+                s=next(gen_get_element)
                 
                 if s is None:
                     raise Exception("gen_get_element salio con None!!!")
@@ -2451,7 +2480,7 @@ class Dot11ManagementBeacon(Dot11ManagementHelper):
         data_len=len(data)
 
         if data_len>max_data_len:
-            raise Exception("data allow up to %d bytes long" % max_data)
+            raise Exception("data allow up to %d bytes long" % max_data_len)
         if len(oui) > 3:
             raise Exception("oui is three bytes long")
         
@@ -2486,7 +2515,7 @@ class Dot11ManagementProbeRequest(Dot11ManagementHelper):
         if not human_readable:
             return rates
             
-        rates_Mbs=tuple(map(lambda x: (x&0x7F)*0.5,rates))
+        rates_Mbs=tuple([(x&0x7F)*0.5 for x in rates])
         return rates_Mbs
 
     def set_supported_rates(self, rates):
@@ -2662,7 +2691,7 @@ class Dot11ManagementAuthentication(Dot11ManagementHelper):
         gen_get_element=self._get_elements_generator(DOT11_MANAGEMENT_ELEMENTS.VENDOR_SPECIFIC)
         try:
             while 1:
-                s=gen_get_element.next()
+                s=next(gen_get_element)
                 
                 if s is None:
                     raise Exception("gen_get_element salio con None!!!")
@@ -2687,7 +2716,7 @@ class Dot11ManagementAuthentication(Dot11ManagementHelper):
         data_len=len(data)
 
         if data_len>max_data_len:
-            raise Exception("data allow up to %d bytes long" % max_data)
+            raise Exception("data allow up to %d bytes long" % max_data_len)
         if len(oui) > 3:
             raise Exception("oui is three bytes long")
         
@@ -2750,7 +2779,7 @@ class Dot11ManagementAssociationRequest(Dot11ManagementHelper):
         if not human_readable:
             return rates
             
-        rates_Mbs=tuple(map(lambda x: (x&0x7F)*0.5,rates))
+        rates_Mbs=tuple([(x&0x7F)*0.5 for x in rates])
         return rates_Mbs
 
     def set_supported_rates(self, rates):
@@ -2786,7 +2815,7 @@ class Dot11ManagementAssociationRequest(Dot11ManagementHelper):
         gen_get_element=self._get_elements_generator(DOT11_MANAGEMENT_ELEMENTS.VENDOR_SPECIFIC)
         try:
             while 1:
-                s=gen_get_element.next()
+                s=next(gen_get_element)
                 
                 if s is None:
                     raise Exception("gen_get_element salio con None!!!")
@@ -2811,7 +2840,7 @@ class Dot11ManagementAssociationRequest(Dot11ManagementHelper):
         data_len=len(data)
 
         if data_len>max_data_len:
-            raise Exception("data allow up to %d bytes long" % max_data)
+            raise Exception("data allow up to %d bytes long" % max_data_len)
         if len(oui) > 3:
             raise Exception("oui is three bytes long")
         
@@ -2869,7 +2898,7 @@ class Dot11ManagementAssociationResponse(Dot11ManagementHelper):
         if not human_readable:
             return rates
             
-        rates_Mbs=tuple(map(lambda x: (x&0x7F)*0.5,rates))
+        rates_Mbs=tuple([(x&0x7F)*0.5 for x in rates])
         return rates_Mbs
 
     def set_supported_rates(self, rates):
@@ -2894,7 +2923,7 @@ class Dot11ManagementAssociationResponse(Dot11ManagementHelper):
         gen_get_element=self._get_elements_generator(DOT11_MANAGEMENT_ELEMENTS.VENDOR_SPECIFIC)
         try:
             while 1:
-                s=gen_get_element.next()
+                s=next(gen_get_element)
                 
                 if s is None:
                     raise Exception("gen_get_element salio con None!!!")
@@ -2918,7 +2947,7 @@ class Dot11ManagementAssociationResponse(Dot11ManagementHelper):
         max_data_len=255-3
         data_len=len(data)
         if data_len>max_data_len:
-            raise Exception("data allow up to %d bytes long" % max_data)
+            raise Exception("data allow up to %d bytes long" % max_data_len)
         if len(oui) > 3:
             raise Exception("oui is three bytes long")
         
@@ -2984,7 +3013,7 @@ class Dot11ManagementReassociationRequest(Dot11ManagementHelper):
         if not human_readable:
             return rates
             
-        rates_Mbs=tuple(map(lambda x: (x&0x7F)*0.5,rates))
+        rates_Mbs=tuple([(x&0x7F)*0.5 for x in rates])
         return rates_Mbs
 
     def set_supported_rates(self, rates):
@@ -3020,7 +3049,7 @@ class Dot11ManagementReassociationRequest(Dot11ManagementHelper):
         gen_get_element=self._get_elements_generator(DOT11_MANAGEMENT_ELEMENTS.VENDOR_SPECIFIC)
         try:
             while 1:
-                s=gen_get_element.next()
+                s=next(gen_get_element)
                 
                 if s is None:
                     raise Exception("gen_get_element salio con None!!!")
@@ -3045,7 +3074,7 @@ class Dot11ManagementReassociationRequest(Dot11ManagementHelper):
         data_len=len(data)
 
         if data_len>max_data_len:
-            raise Exception("data allow up to %d bytes long" % max_data)
+            raise Exception("data allow up to %d bytes long" % max_data_len)
         if len(oui) > 3:
             raise Exception("oui is three bytes long")
         

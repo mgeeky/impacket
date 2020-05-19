@@ -1,4 +1,4 @@
-# Copyright (c) 2003-2016 CORE Security Technologies
+# SECUREAUTH LABS. Copyright 2018 SecureAuth Corporation. All rights reserved.
 #
 # This software is provided under under a slightly modified version
 # of the Apache Software License. See the accompanying LICENSE file
@@ -113,6 +113,10 @@ class AddressType(Enum):
     AppleTalk_DDP   = 16
     NetBios         = 20
     IPv6            = 24
+
+# 3.1.5.9 Key Usage Numbers
+KERB_NON_KERB_SALT       = 16
+KERB_NON_KERB_CKSUM_SALT = 17
 
 # 7.5.4.  Authorization Data Types
 class AuthorizationDataType(Enum):
@@ -397,6 +401,14 @@ class APOptions(Enum):
     reserved        = 0
     use_session_key = 1
     mutual_required = 2
+
+class PAPacOptions(Enum):
+    # [MS-KILE] 2.2.10
+    claims                                = 0
+    branch_aware                          = 1
+    forward_to_full_dc                    = 2
+    # [MS-SFU] 2.2.5
+    resource_based_constrained_delegation = 3
 
 class EncryptionTypes(Enum):
     des_cbc_crc                  = 1

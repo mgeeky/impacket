@@ -1,5 +1,5 @@
-#!/usr/bin/python
-# Copyright (c) 2003-2016 CORE Security Technologies
+#!/usr/bin/env python
+# SECUREAUTH LABS. Copyright 2018 SecureAuth Corporation. All rights reserved.
 #
 # This software is provided under under a slightly modified version
 # of the Apache Software License. See the accompanying LICENSE file
@@ -14,10 +14,10 @@
 #  Structure
 #
 
-
+from __future__ import division
+from __future__ import print_function
 import argparse
 import sys
-import string
 import os
 import logging
 
@@ -35,14 +35,15 @@ if __name__ == '__main__':
             self.intro = '[!] Press help for extra shell commands'
 
         def do_help(self, line):
-            print """
+            print("""
      lcd {path}                 - changes the current local directory to {path}
      exit                       - terminates the server process (and this session)
      enable_xp_cmdshell         - you know what it means
      disable_xp_cmdshell        - you know what it means
      xp_cmdshell {cmd}          - executes cmd using xp_cmdshell
+     sp_start_job {cmd}         - executes cmd using the sql server agent (blind)
      ! {cmd}                    - executes a local shell cmd
-     """ 
+     """) 
 
         def do_shell(self, s):
             os.system(s)
@@ -56,15 +57,31 @@ if __name__ == '__main__':
             except:
                 pass
 
+        def sp_start_job(self, s):
+            try:
+                self.sql.sql_query("DECLARE @job NVARCHAR(100);"
+                                   "SET @job='IdxDefrag'+CONVERT(NVARCHAR(36),NEWID());"
+                                   "EXEC msdb..sp_add_job @job_name=@job,@description='INDEXDEFRAG',"
+                                   "@owner_login_name='sa',@delete_level=3;"
+                                   "EXEC msdb..sp_add_jobstep @job_name=@job,@step_id=1,@step_name='Defragmentation',"
+                                   "@subsystem='CMDEXEC',@command='%s',@on_success_action=1;"
+                                   "EXEC msdb..sp_add_jobserver @job_name=@job;"
+                                   "EXEC msdb..sp_start_job @job_name=@job;" % s)
+                self.sql.printReplies()
+                self.sql.printRows()
+            except:
+                pass
+
         def do_lcd(self, s):
             if s == '':
-                print os.getcwd()
+                print(os.getcwd())
             else:
                 os.chdir(s)
     
         def do_enable_xp_cmdshell(self, line):
             try:
-                self.sql.sql_query("exec master.dbo.sp_configure 'show advanced options',1;RECONFIGURE;exec master.dbo.sp_configure 'xp_cmdshell', 1;RECONFIGURE;")
+                self.sql.sql_query("exec master.dbo.sp_configure 'show advanced options',1;RECONFIGURE;"
+                                   "exec master.dbo.sp_configure 'xp_cmdshell', 1;RECONFIGURE;")
                 self.sql.printReplies()
                 self.sql.printRows()
             except:
@@ -72,7 +89,8 @@ if __name__ == '__main__':
 
         def do_disable_xp_cmdshell(self, line):
             try:
-                self.sql.sql_query("exec sp_configure 'xp_cmdshell', 0 ;RECONFIGURE;exec sp_configure 'show advanced options', 0 ;RECONFIGURE;")
+                self.sql.sql_query("exec sp_configure 'xp_cmdshell', 0 ;RECONFIGURE;exec sp_configure "
+                                   "'show advanced options', 0 ;RECONFIGURE;")
                 self.sql.printReplies()
                 self.sql.printRows()
             except:
@@ -94,14 +112,15 @@ if __name__ == '__main__':
 
     # Init the example's logger theme
     logger.init()
-    print version.BANNER
+    print(version.BANNER)
 
     parser = argparse.ArgumentParser(add_help = True, description = "TDS client implementation (SSL supported).")
 
     parser.add_argument('target', action='store', help='[[domain/]username[:password]@]<targetName or address>')
     parser.add_argument('-port', action='store', default='1433', help='target MSSQL port (default 1433)')
     parser.add_argument('-db', action='store', help='MSSQL database instance (default None)')
-    parser.add_argument('-windows-auth', action='store_true', default = 'False', help='whether or not to use Windows Authentication (default False)')
+    parser.add_argument('-windows-auth', action='store_true', default = 'False', help='whether or not to use Windows '
+                                                                                      'Authentication (default False)')
     parser.add_argument('-debug', action='store_true', help='Turn DEBUG output ON')
     parser.add_argument('-file', type=argparse.FileType('r'), help='input file with commands to execute in the SQL shell')
 
@@ -109,8 +128,13 @@ if __name__ == '__main__':
 
     group.add_argument('-hashes', action="store", metavar = "LMHASH:NTHASH", help='NTLM hashes, format is LMHASH:NTHASH')
     group.add_argument('-no-pass', action="store_true", help='don\'t ask for password (useful for -k)')
-    group.add_argument('-k', action="store_true", help='Use Kerberos authentication. Grabs credentials from ccache file (KRB5CCNAME) based on target parameters. If valid credentials cannot be found, it will use the ones specified in the command line')
-    group.add_argument('-aesKey', action="store", metavar = "hex key", help='AES key to use for Kerberos Authentication (128 or 256 bits)')
+    group.add_argument('-k', action="store_true", help='Use Kerberos authentication. Grabs credentials from ccache file '
+                       '(KRB5CCNAME) based on target parameters. If valid credentials cannot be found, it will use the '
+                       'ones specified in the command line')
+    group.add_argument('-aesKey', action="store", metavar = "hex key", help='AES key to use for Kerberos Authentication '
+                                                                            '(128 or 256 bits)')
+    group.add_argument('-dc-ip', action='store',metavar = "ip address",  help='IP Address of the domain controller. If '
+                       'ommited it use the domain part (FQDN) specified in the target parameter')
 
     if len(sys.argv)==1:
         parser.print_help()
@@ -120,11 +144,15 @@ if __name__ == '__main__':
 
     if options.debug is True:
         logging.getLogger().setLevel(logging.DEBUG)
+        # Print the Library's installation path
+        logging.debug(version.getInstallationPath())
     else:
         logging.getLogger().setLevel(logging.INFO)
 
     import re
-    domain, username, password, address = re.compile('(?:(?:([^/@:]*)/)?([^@:]*)(?::([^@]*))?@)?(.*)').match(options.target).groups('')
+
+    domain, username, password, address = re.compile('(?:(?:([^/@:]*)/)?([^@:]*)(?::([^@]*))?@)?(.*)').match(
+        options.target).groups('')
     
     #In case the password contains '@'
     if '@' in address:
@@ -141,15 +169,17 @@ if __name__ == '__main__':
     if options.aesKey is not None:
         options.k = True
 
-    ms_sql = tds.MSSQL(address, string.atoi(options.port))
+    ms_sql = tds.MSSQL(address, int(options.port))
     ms_sql.connect()
     try:
         if options.k is True:
-            res = ms_sql.kerberosLogin(options.db, username, password, domain, options.hashes, options.aesKey)
+            res = ms_sql.kerberosLogin(options.db, username, password, domain, options.hashes, options.aesKey,
+                                       kdcHost=options.dc_ip)
         else:
             res = ms_sql.login(options.db, username, password, domain, options.hashes, options.windows_auth)
         ms_sql.printReplies()
-    except Exception, e:
+    except Exception as e:
+        logging.debug("Exception:", exc_info=True)
         logging.error(str(e))
         res = False
     if res is True:
@@ -158,6 +188,6 @@ if __name__ == '__main__':
             shell.cmdloop()
         else:
             for line in options.file.readlines():
-                print "SQL> %s" % line,
+                print("SQL> %s" % line, end=' ')
                 shell.onecmd(line)
     ms_sql.disconnect()

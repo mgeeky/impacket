@@ -1,4 +1,4 @@
-# Copyright (c) 2003-2016 CORE Security Technologies
+# SECUREAUTH LABS. Copyright 2018 SecureAuth Corporation. All rights reserved.
 #
 # This software is provided under under a slightly modified version
 # of the Apache Software License. See the accompanying LICENSE file
@@ -15,17 +15,14 @@
 
 import array
 
-import ImpactPacket
-import dot11
-import IP6
-import ICMP6
-import IP6_Extension_Headers
-from cdp import CDP
-from Dot11Crypto import RC4
-import eap
-from impacket import wps
-from impacket.dot11 import Dot11WEPData
-
+from impacket import ICMP6
+from impacket import IP6
+from impacket import IP6_Extension_Headers
+from impacket import ImpactPacket
+from impacket import LOG
+from impacket import dot11
+from impacket import wps, eap, dhcp
+from impacket.cdp import CDP
 
 """Classes to convert from raw packets into a hierarchy of
 ImpactPacket derived objects.
@@ -81,6 +78,9 @@ class EthDecoder(Decoder):
         elif e.get_ether_type() == ImpactPacket.ARP.ethertype:
             self.arp_decoder = ARPDecoder()
             packet = self.arp_decoder.decode(aBuffer[off:])
+        elif e.get_ether_type() == eap.DOT1X_AUTHENTICATION:
+            self.eapol_decoder = EAPOLDecoder()
+            packet = self.eapol_decoder.decode(aBuffer[off:])
         # LLC ?
         elif e.get_ether_type() < 1500:
             self.llc_decoder = LLCDecoder()
@@ -108,6 +108,9 @@ class LinuxSLLDecoder(Decoder):
         elif e.get_ether_type() == ImpactPacket.ARP.ethertype:
             self.arp_decoder = ARPDecoder()
             packet = self.arp_decoder.decode(aBuffer[off:])
+        elif e.get_ether_type() == eap.DOT1X_AUTHENTICATION:
+            self.eapol_decoder = EAPOLDecoder()
+            packet = self.eapol_decoder.decode(aBuffer[off:])
         else:
             self.data_decoder = DataDecoder()
             packet = self.data_decoder.decode(aBuffer[off:])
@@ -124,6 +127,12 @@ class IPDecoder(Decoder):
         self.set_decoded_protocol ( i )
         off = i.get_header_size()
         end = i.get_ip_len()
+        # If ip_len == 0 we might be facing TCP segmentation offload, let's calculate the right len
+        if end == 0:
+            LOG.warning('IP len reported as 0, most probably because of TCP segmentation offload. Attempting to fix its size')
+            i.set_ip_len(len(aBuffer))
+            end = i.get_ip_len()
+
         if i.get_ip_p() == ImpactPacket.UDP.protocol:
             self.udp_decoder = UDPDecoder()
             packet = self.udp_decoder.decode(aBuffer[off:end])
@@ -133,6 +142,9 @@ class IPDecoder(Decoder):
         elif i.get_ip_p() == ImpactPacket.ICMP.protocol:
             self.icmp_decoder = ICMPDecoder()
             packet = self.icmp_decoder.decode(aBuffer[off:end])
+        elif i.get_ip_p() == ImpactPacket.IGMP.protocol:
+            self.igmp_decoder = IGMPDecoder()
+            packet = self.igmp_decoder.decode(aBuffer[off:end])
         else:
             self.data_decoder = DataDecoder()
             packet = self.data_decoder.decode(aBuffer[off:end])
@@ -284,6 +296,18 @@ class TCPDecoder(Decoder):
         packet = self.data_decoder.decode(aBuffer[off:])
         t.contains(packet)
         return t
+
+class IGMPDecoder(Decoder):
+    def __init__(self):
+        pass
+    def decode(self, aBuffer):
+        ig = ImpactPacket.IGMP(aBuffer)
+        off = ig.get_header_size()
+        self.data_decoder = DataDecoder()
+        packet = self.data_decoder.decode(aBuffer[off:])
+        ig.contains(packet)
+        return ig
+
 
 class IPDecoderForICMP(Decoder):
     """This class was added to parse the IP header of ICMP unreachables packets
@@ -564,33 +588,13 @@ class Dot11WEPDecoder(BaseDot11Decoder):
         
         return wep
 
-    def decrypt_data(self, key_string):
-        'Return \'WEP Data\' decrypted'
-        
-        # Needs to be at least 8 bytes of payload 
-        if len(self.body_string)<8:
-            return self.body_string
-        
-        # initialize the first bytes of the key from the IV 
-        # and copy rest of the WEP key (the secret part) 
-        key=self.get_iv()+key_string
-        rc4=RC4(key)
-        out=rc4.decrypt(data)
-        dwd=Dot11WEPData(out)
-        
-        if False: # is ICV correct
-            return dwd
-        else:
-            return self.body_string
-
-
 class Dot11WEPDataDecoder(BaseDot11Decoder):
     def __init__(self):
         BaseDot11Decoder.__init__(self)
-        
+
     def decode(self, aBuffer):
         wep_data = dot11.Dot11WEPData(aBuffer)
-        
+
         if not wep_data.check_icv():
             # TODO: Do something when the icv is not correct
             pass
@@ -599,65 +603,65 @@ class Dot11WEPDataDecoder(BaseDot11Decoder):
 
         llc_decoder = LLCDecoder()
         packet = llc_decoder.decode(wep_data.body_string)
-        
+
         wep_data.contains(packet)
-        
+
         return wep_data
 
 
 class Dot11WPADecoder(BaseDot11Decoder):
     def __init__(self):
         BaseDot11Decoder.__init__(self)
-        
+
     def decode(self, aBuffer, key=None):
         wpa = dot11.Dot11WPA(aBuffer)
         self.set_decoded_protocol( wpa )
 
         if wpa.is_WPA() is False:
             return None
-        
+
         if key:
             decoded_string=wpa.get_decrypted_data()
-            
-            wpa_data = Dot11DataWPADataDecoder()
+
+            wpa_data = Dot11WPADataDecoder()
             packet = wpa_data.decode(decoded_string)
         else:
             data_decoder = DataDecoder()
             packet = data_decoder.decode(wpa.body_string)
-        
+
         wpa.contains(packet)
-        
+
         return wpa
-    
+
 class Dot11WPADataDecoder(BaseDot11Decoder):
     def __init__(self):
         BaseDot11Decoder.__init__(self)
-        
+
     def decode(self, aBuffer):
         wpa_data = dot11.Dot11WPAData(aBuffer)
         self.set_decoded_protocol( wpa_data )
 
         llc_decoder = LLCDecoder()
         packet = self.llc_decoder.decode(wpa_data.body_string)
-        
+
         wpa_data.contains(packet)
-        
+
         return wpa_data
 
 class Dot11WPA2Decoder(BaseDot11Decoder):
     def __init__(self):
         BaseDot11Decoder.__init__(self)
-        
+
     def decode(self, aBuffer, key=None):
         wpa2 = dot11.Dot11WPA2(aBuffer)
         self.set_decoded_protocol( wpa2 )
 
         if wpa2.is_WPA2() is False:
             return None
-        
+
         if key:
             decoded_string=wpa2.get_decrypted_data()
-            
+
             wpa2_data = Dot11WPA2DataDecoder()
             packet = wpa2_data.decode(decoded_string)
         else:
@@ -665,32 +669,32 @@ class Dot11WPA2Decoder(BaseDot11Decoder):
             packet = data_decoder.decode(wpa2.body_string)
 
             wpa2.contains(packet)
-            
+
             return wpa2
-        
+
 class Dot11WPA2DataDecoder(BaseDot11Decoder):
     def __init__(self):
         BaseDot11Decoder.__init__(self)
-        
+
     def decode(self, aBuffer):
         wpa2_data = dot11.Dot11WPA2Data(aBuffer)
         self.set_decoded_protocol( wpa2_data )
 
         llc_decoder = LLCDecoder()
         packet = self.llc_decoder.decode(wpa2_data.body_string)
-        
+
         wpa2_data.contains(packet)
-        
+
         return wpa2_data
-    
+
 class LLCDecoder(Decoder):
     def __init__(self):
         pass
-        
+
     def decode(self, aBuffer):
         d = dot11.LLC(aBuffer)
         self.set_decoded_protocol( d )
-        
+
         if d.get_DSAP()==dot11.SAPTypes.SNAP:
             if d.get_SSAP()==dot11.SAPTypes.SNAP:
                 if d.get_control()==dot11.LLC.DLC_UNNUMBERED_FRAMES:
@@ -698,7 +702,7 @@ class LLCDecoder(Decoder):
                     packet = snap_decoder.decode(d.body_string)
                     d.contains(packet)
                     return d
-        
+
         # Only SNAP is implemented
         data_decoder = DataDecoder()
         packet = data_decoder.decode(d.body_string)
@@ -708,7 +712,7 @@ class LLCDecoder(Decoder):
 class SNAPDecoder(Decoder):
     def __init__(self):
         pass
-        
+
     def decode(self, aBuffer):
         s = dot11.SNAP(aBuffer)
         self.set_decoded_protocol( s )
@@ -736,27 +740,27 @@ class SNAPDecoder(Decoder):
         return s
 
 class CDPDecoder(Decoder):
-    
+
     def __init__(self):
         pass
-        
+
     def decode(self, aBuffer):
         s = CDP(aBuffer)
         self.set_decoded_protocol( s )
         return s
-            
+
 class Dot11ManagementDecoder(BaseDot11Decoder):
     def __init__(self):
         BaseDot11Decoder.__init__(self)
         self.subtype = None
-        
+
     def set_subtype(self, subtype):
         self.subtype=subtype
-    
+
     def decode(self, aBuffer):
         p = dot11.Dot11ManagementFrame(aBuffer)
         self.set_decoded_protocol( p )
-        
+
         if self.subtype is dot11.Dot11Types.DOT11_SUBTYPE_MANAGEMENT_BEACON:
             self.mgt_beacon_decoder = Dot11ManagementBeaconDecoder()
             packet = self.mgt_beacon_decoder.decode(p.body_string)
@@ -790,38 +794,38 @@ class Dot11ManagementDecoder(BaseDot11Decoder):
         else:
             data_decoder = DataDecoder()
             packet = data_decoder.decode(p.body_string)
-        
+
         p.contains(packet)
         return p
 
 class Dot11ManagementBeaconDecoder(BaseDot11Decoder):
     def __init__(self):
         BaseDot11Decoder.__init__(self)
-        
+
     def decode(self, aBuffer):
         p = dot11.Dot11ManagementBeacon(aBuffer)
         self.set_decoded_protocol( p )
-        
+
         return p
 
 class Dot11ManagementProbeRequestDecoder(BaseDot11Decoder):
     def __init__(self):
         BaseDot11Decoder.__init__(self)
-        
+
     def decode(self, aBuffer):
         p = dot11.Dot11ManagementProbeRequest(aBuffer)
         self.set_decoded_protocol( p )
-        
+
         return p
 
 class Dot11ManagementProbeResponseDecoder(BaseDot11Decoder):
     def __init__(self):
         BaseDot11Decoder.__init__(self)
-        
+
     def decode(self, aBuffer):
         p = dot11.Dot11ManagementProbeResponse(aBuffer)
         self.set_decoded_protocol( p )
-        
+
         return p
 
 class Dot11ManagementDeauthenticationDecoder(BaseDot11Decoder):
@@ -831,7 +835,7 @@ class Dot11ManagementDeauthenticationDecoder(BaseDot11Decoder):
     def decode(self, aBuffer):
         p = dot11.Dot11ManagementDeauthentication(aBuffer)
         self.set_decoded_protocol( p )
-        
+
         return p
 
 class Dot11ManagementAuthenticationDecoder(BaseDot11Decoder):
@@ -847,57 +851,57 @@ class Dot11ManagementAuthenticationDecoder(BaseDot11Decoder):
 class Dot11ManagementDisassociationDecoder(BaseDot11Decoder):
     def __init__(self):
         BaseDot11Decoder.__init__(self)
-        
+
     def decode(self, aBuffer):
         p = dot11.Dot11ManagementDisassociation(aBuffer)
         self.set_decoded_protocol(p)
-        
+
         return p
 
 class Dot11ManagementAssociationRequestDecoder(BaseDot11Decoder):
     def __init__(self):
         BaseDot11Decoder.__init__(self)
-        
+
     def decode(self, aBuffer):
         p = dot11.Dot11ManagementAssociationRequest(aBuffer)
         self.set_decoded_protocol(p)
-        
+
         return p
 
 class Dot11ManagementAssociationResponseDecoder(BaseDot11Decoder):
     def __init__(self):
         BaseDot11Decoder.__init__(self)
-        
+
     def decode(self, aBuffer):
         p = dot11.Dot11ManagementAssociationResponse(aBuffer)
         self.set_decoded_protocol(p)
-        
+
         return p
 
 class Dot11ManagementReassociationRequestDecoder(BaseDot11Decoder):
     def __init__(self):
         BaseDot11Decoder.__init__(self)
-        
+
     def decode(self, aBuffer):
         p = dot11.Dot11ManagementReassociationRequest(aBuffer)
         self.set_decoded_protocol(p)
-        
+
         return p
 
 class Dot11ManagementReassociationResponseDecoder(BaseDot11Decoder):
     def __init__(self):
         BaseDot11Decoder.__init__(self)
-        
+
     def decode(self, aBuffer):
         p = dot11.Dot11ManagementReassociationResponse(aBuffer)
         self.set_decoded_protocol(p)
-        
+
         return p
 
 class BaseDecoder(Decoder):
-    
+
     def decode(self, buff):
-        
+
         packet = self.klass(buff)
         self.set_decoded_protocol(packet)
         cd = self.child_decoders.get(self.child_key(packet), DataDecoder())
@@ -909,7 +913,7 @@ class SimpleConfigDecoder(BaseDecoder):
     child_decoders = {}
     klass = wps.SimpleConfig
     child_key = lambda s,p: None
-    
+
     def decode(self, buff):
         sc = BaseDecoder.decode(self, buff)
         ary = array.array('B', sc.child().get_packet())
@@ -917,7 +921,7 @@ class SimpleConfigDecoder(BaseDecoder):
         tlv = wps.SimpleConfig.build_tlv_container()
         tlv.from_ary(ary)
         sc.contains(tlv)
-        
+
         return sc
 
 class EAPExpandedDecoder(BaseDecoder):
@@ -926,14 +930,14 @@ class EAPExpandedDecoder(BaseDecoder):
     }
     klass = eap.EAPExpanded
     child_key = lambda s,p: (p.get_vendor_id(), p.get_vendor_type())
-        
+
 class EAPRDecoder(BaseDecoder):
     child_decoders = {
         eap.EAPR.EXPANDED:EAPExpandedDecoder()
     }
     klass = eap.EAPR
     child_key = lambda s, p: p.get_type()
-        
+
 class EAPDecoder(BaseDecoder):
     child_decoders = {
         eap.EAP.REQUEST: EAPRDecoder(),
@@ -941,11 +945,33 @@ class EAPDecoder(BaseDecoder):
     }
     klass = eap.EAP
     child_key = lambda s, p: p.get_code()
-        
+
 class EAPOLDecoder(BaseDecoder):
     child_decoders = {
         eap.EAPOL.EAP_PACKET: EAPDecoder()
     }
     klass = eap.EAPOL
     child_key = lambda s, p: p.get_packet_type()
-    
+
+class BootpDecoder(Decoder):
+    def __init__(self):
+        pass
+
+    def decode(self, aBuffer):
+        d = dhcp.BootpPacket(aBuffer)
+        self.set_decoded_protocol( d )
+        off = len(d.getData())
+        if dhcp.DhcpPacket(aBuffer[off:])['cookie'] == dhcp.DhcpPacket.MAGIC_NUMBER:
+            self.data_decoder = DHCPDecoder()
+            packet = self.data_decoder.decode(aBuffer[off:])
+            d.contains(packet)
+        return d
+
+class DHCPDecoder(Decoder):
+    def __init__(self):
+        pass
+
+    def decode(self, aBuffer):
+        d = dhcp.DhcpPacket(aBuffer)
+        self.set_decoded_protocol( d )
+        return d

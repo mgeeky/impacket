@@ -1,4 +1,4 @@
-# Copyright (c) 2003-2016 CORE Security Technologies
+# SECUREAUTH LABS. Copyright 2018 SecureAuth Corporation. All rights reserved.
 #
 # This software is provided under under a slightly modified version
 # of the Apache Software License. See the accompanying LICENSE file
@@ -11,16 +11,22 @@
 #
 #   Best way to learn how to use these calls is to grab the protocol standard
 #   so you understand what the call does, and then read the test case located
-#   at https://github.com/CoreSecurity/impacket/tree/master/impacket/testcases/SMB_RPC
+#   at https://github.com/SecureAuthCorp/impacket/tree/master/tests/SMB_RPC
 #
 #   Some calls have helper functions, which makes it even easier to use.
 #   They are located at the end of this file. 
 #   Helper functions start with "h"<name of the call>.
 #   There are test cases for them too. 
 #
+from __future__ import division
+from __future__ import print_function
+from builtins import bytes
 import hashlib
 from struct import pack
+import six
+from six import PY2
 
+from impacket import LOG
 from impacket.dcerpc.v5.ndr import NDRCALL, NDRSTRUCT, NDRPOINTER, NDRUniConformantArray, NDRUNION, NDR, NDRENUM
 from impacket.dcerpc.v5.dtypes import PUUID, DWORD, NULL, GUID, LPWSTR, BOOL, ULONG, UUID, LONGLONG, ULARGE_INTEGER, LARGE_INTEGER
 from impacket import hresult_errors, system_errors
@@ -31,12 +37,13 @@ from impacket.dcerpc.v5.rpcrt import DCERPCException
 from impacket.krb5 import crypto
 from pyasn1.type import univ
 from pyasn1.codec.ber import decoder
+from impacket.crypto import transformKey
 
 try:
-    from Crypto.Cipher import ARC4, DES
+    from Cryptodome.Cipher import ARC4, DES
 except Exception:
-    LOG.critical("Warning: You don't have any crypto installed. You need PyCrypto")
-    LOG.critical("See http://www.pycrypto.org/")
+    LOG.critical("Warning: You don't have any crypto installed. You need pycryptodomex")
+    LOG.critical("See https://pypi.org/project/pycryptodomex/")
 
 MSRPC_UUID_DRSUAPI = uuidtup_to_bin(('E3514235-4B06-11D1-AB04-00C04FC2DCD2','4.0'))
 
@@ -46,11 +53,11 @@ class DCERPCSessionError(DCERPCException):
 
     def __str__( self ):
         key = self.error_code
-        if hresult_errors.ERROR_MESSAGES.has_key(key):
+        if key in hresult_errors.ERROR_MESSAGES:
             error_msg_short = hresult_errors.ERROR_MESSAGES[key][0]
             error_msg_verbose = hresult_errors.ERROR_MESSAGES[key][1]
             return 'DRSR SessionError: code: 0x%x - %s - %s' % (self.error_code, error_msg_short, error_msg_verbose)
-        elif system_errors.ERROR_MESSAGES.has_key(key & 0xffff):
+        elif key & 0xffff in system_errors.ERROR_MESSAGES:
             error_msg_short = system_errors.ERROR_MESSAGES[key & 0xffff][0]
             error_msg_verbose = system_errors.ERROR_MESSAGES[key & 0xffff][1]
             return 'DRSR SessionError: code: 0x%x - %s - %s' % (self.error_code, error_msg_short, error_msg_verbose)
@@ -86,14 +93,15 @@ class EXOP_ERR(NDRENUM):
         EXOP_ERR_PARAM_ERROR           = 0x00000010
 
     def dump(self, msg = None, indent = 0):
-        if msg is None: msg = self.__class__.__name__
+        if msg is None:
+            msg = self.__class__.__name__
         if msg != '':
-            print msg,
+            print(msg, end=' ')
 
         try:
-            print " %s" % self.enumItems(self.fields['Data']).name,
+            print(" %s" % self.enumItems(self.fields['Data']).name, end=' ')
         except ValueError:
-            print " %d" % self.fields['Data']
+            print(" %d" % self.fields['Data'])
 
 # 4.1.10.2.18 EXOP_REQ Codes
 EXOP_FSMO_REQ_ROLE = 0x00000001
@@ -138,6 +146,7 @@ DRS_EXT_NONDOMAIN_NCS = 0x00800000
 DRS_EXT_GETCHGREQ_V8 = 0x01000000
 DRS_EXT_GETCHGREPLY_V5 = 0x02000000
 DRS_EXT_GETCHGREPLY_V6 = 0x04000000
+DRS_EXT_GETCHGREPLY_V9 = 0x00000100
 DRS_EXT_WHISTLER_BETA3 = 0x08000000
 DRS_EXT_W2K3_DEFLATE = 0x10000000
 DRS_EXT_GETCHGREQ_V10 = 0x20000000
@@ -251,6 +260,8 @@ DRS_VERIFY_FPOS = 0x00000003
 DRS_NT4_CHGLOG_GET_CHANGE_LOG = 0x00000001
 DRS_NT4_CHGLOG_GET_SERIAL_NUMBERS = 0x00000002
 
+# 4.1.10.2.15 DRS_MSG_GETCHGREPLY_NATIVE_VERSION_NUMBER
+DRS_MSG_GETCHGREPLY_NATIVE_VERSION_NUMBER = 9
 ################################################################################
 # STRUCTURES
 ################################################################################
@@ -265,7 +276,7 @@ class ENCRYPTED_PAYLOAD(Structure):
 # 5.136 NT4SID
 class NT4SID(NDRSTRUCT):
     structure =  (
-        ('Data','28s=""'),
+        ('Data','28s=b""'),
     )
     def getAlignment(self):
         return 4
@@ -273,7 +284,7 @@ class NT4SID(NDRSTRUCT):
 # 5.40 DRS_HANDLE
 class DRS_HANDLE(NDRSTRUCT):
     structure =  (
-        ('Data','20s=""'),
+        ('Data','20s=b""'),
     )
     def getAlignment(self):
         return 4
@@ -307,11 +318,11 @@ class PDRS_EXTENSIONS(NDRPOINTER):
 class DRS_EXTENSIONS_INT(Structure):
     structure =  (
         ('dwFlags','<L=0'),
-        ('SiteObjGuid','16s=""'),
+        ('SiteObjGuid','16s=b""'),
         ('Pid','<L=0'),
         ('dwReplEpoch','<L=0'),
         ('dwFlagsExt','<L=0'),
-        ('ConfigObjGUID','16s=""'),
+        ('ConfigObjGUID','16s=b""'),
         ('dwExtCaps','<L=0'),
     )
 
@@ -597,7 +608,11 @@ class WCHAR_ARRAY(NDRUniConformantArray):
 
     def __getitem__(self, key):
         if key == 'Data':
-            return ''.join([chr(i) for i in self.fields[key]])
+            try:
+                return ''.join([six.unichr(i) for i in self.fields[key]])
+            except ValueError as e:
+                LOG.debug("ValueError Exception", exc_info=True)
+                LOG.error(str(e))
         else:
             return NDR.__getitem__(self,key)
 
@@ -880,7 +895,7 @@ class REPLENTINFLIST(NDRSTRUCT):
         ('pParentGuidm',PUUID),
         ('pMetaDataExt',PPROPERTY_META_DATA_EXT_VECTOR),
     )
-    # ToDo: Here we should work with getData and fromString beacuse we're cheating with pNextEntInf
+    # ToDo: Here we should work with getData and fromString because we're cheating with pNextEntInf
     def fromString(self, data, soFar = 0 ):
         # Here we're changing the struct so we can represent a linked list with NDR
         self.fields['pNextEntInf'] = PREPLENTINFLIST(isNDR64 = self._isNDR64)
@@ -956,8 +971,19 @@ class VALUE_META_DATA_EXT_V1(NDRSTRUCT):
         ('MetaData',PROPERTY_META_DATA_EXT),
     )
 
-# 5.166 REPLVALINF
-class REPLVALINF(NDRSTRUCT):
+# 5.215 VALUE_META_DATA_EXT_V3
+class VALUE_META_DATA_EXT_V3(NDRSTRUCT):
+    structure =  (
+        ('timeCreated',DSTIME),
+        ('MetaData',PROPERTY_META_DATA_EXT),
+        ('unused1',DWORD),
+        ('unused1',DWORD),
+        ('unused1',DWORD),
+        ('timeExpired',DSTIME),
+    )
+
+# 5.167 REPLVALINF_V1
+class REPLVALINF_V1(NDRSTRUCT):
     structure =  (
         ('pObject',PDSNAME),
         ('attrTyp',ATTRTYP),
@@ -971,13 +997,39 @@ class REPLVALINF(NDRSTRUCT):
         #self.dumpRaw()
         return retVal
 
-class REPLVALINF_ARRAY(NDRUniConformantArray):
-    item = REPLVALINF
+class REPLVALINF_V1_ARRAY(NDRUniConformantArray):
+    item = REPLVALINF_V1
 
-class PREPLVALINF_ARRAY(NDRPOINTER):
+class PREPLVALINF_V1_ARRAY(NDRPOINTER):
     referent = (
-        ('Data',REPLVALINF_ARRAY),
+        ('Data', REPLVALINF_V1_ARRAY),
     )
+
+# 5.168 REPLVALINF_V3
+class REPLVALINF_V3(NDRSTRUCT):
+    structure = (
+        ('pObject', PDSNAME),
+        ('attrTyp', ATTRTYP),
+        ('Aval', ATTRVAL),
+        ('fIsPresent', BOOL),
+        ('MetaData', VALUE_META_DATA_EXT_V3),
+    )
+
+    def fromString(self, data, soFar=0):
+        retVal = NDRSTRUCT.fromString(self, data, soFar)
+        # self.dumpRaw()
+        return retVal
+
+class REPLVALINF_V3_ARRAY(NDRUniConformantArray):
+    item = REPLVALINF_V3
+
+class PREPLVALINF_V3_ARRAY(NDRPOINTER):
+    referent = (
+        ('Data', REPLVALINF_V3_ARRAY),
+    )
+
+# 5.169 REPLVALINF_NATIVE
+REPLVALINF_NATIVE = REPLVALINF_V3
 
 # 4.1.10.2.11 DRS_MSG_GETCHGREPLY_V6
 class DRS_MSG_GETCHGREPLY_V6(NDRSTRUCT):
@@ -997,7 +1049,7 @@ class DRS_MSG_GETCHGREPLY_V6(NDRSTRUCT):
         ('cNumNcSizeObjectsc',ULONG),
         ('cNumNcSizeValues',ULONG),
         ('cNumValues',DWORD),
-        #('rgValues',PREPLVALINF_ARRAY),
+        #('rgValues',PREPLVALINF_V1_ARRAY),
         # ToDo: Once we find out what's going on with PREPLVALINF_ARRAY get it back
         # Seems there's something in there that is not being parsed correctly
         ('rgValues',DWORD),
@@ -1020,6 +1072,34 @@ class DRS_MSG_GETCHGREPLY_V7(NDRSTRUCT):
         ('CompressedAny',DRS_COMPRESSED_BLOB),
     )
 
+# 4.1.10.2.13 DRS_MSG_GETCHGREPLY_V9
+class DRS_MSG_GETCHGREPLY_V9(NDRSTRUCT):
+    structure =  (
+        ('uuidDsaObjSrc',UUID),
+        ('uuidInvocIdSrc',UUID),
+        ('pNC',PDSNAME),
+        ('usnvecFrom',USN_VECTOR),
+        ('usnvecTo',USN_VECTOR),
+        ('pUpToDateVecSrc',PUPTODATE_VECTOR_V2_EXT),
+        ('PrefixTableSrc',SCHEMA_PREFIX_TABLE),
+        ('ulExtendedRet',EXOP_ERR),
+        ('cNumObjects',ULONG),
+        ('cNumBytes',ULONG),
+        ('pObjects',PREPLENTINFLIST),
+        ('fMoreData',BOOL),
+        ('cNumNcSizeObjectsc',ULONG),
+        ('cNumNcSizeValues',ULONG),
+        ('cNumValues',DWORD),
+        #('rgValues',PREPLVALINF_V3_ARRAY),
+        # ToDo: Once we find out what's going on with PREPLVALINF_ARRAY get it back
+        # Seems there's something in there that is not being parsed correctly
+        ('rgValues',DWORD),
+        ('dwDRSError',DWORD),
+    )
+
+# 4.1.10.2.14 DRS_MSG_GETCHGREPLY_NATIVE
+DRS_MSG_GETCHGREPLY_NATIVE = DRS_MSG_GETCHGREPLY_V9
+
 # 4.1.10.2.8 DRS_MSG_GETCHGREPLY
 class DRS_MSG_GETCHGREPLY(NDRUNION):
     commonHdr = (
@@ -1030,6 +1110,7 @@ class DRS_MSG_GETCHGREPLY(NDRUNION):
         2  : ('V2', DRS_MSG_GETCHGREPLY_V2),
         6  : ('V6', DRS_MSG_GETCHGREPLY_V6),
         7  : ('V7', DRS_MSG_GETCHGREPLY_V7),
+        9  : ('V9', DRS_MSG_GETCHGREPLY_V9),
     }
 
 # 4.1.27.1.2 DRS_MSG_VERIFYREQ_V1
@@ -1136,6 +1217,19 @@ class DRSBindResponse(NDRCALL):
         ('ErrorCode',DWORD),
     )
 
+# 4.1.25 IDL_DRSUnbind (Opnum 1)
+class DRSUnbind(NDRCALL):
+    opnum = 1
+    structure = (
+        ('phDrs', DRS_HANDLE),
+    )
+
+class DRSUnbindResponse(NDRCALL):
+    structure = (
+        ('phDrs', DRS_HANDLE),
+        ('ErrorCode',DWORD),
+    )
+
 # 4.1.10 IDL_DRSGetNCChanges (Opnum 3)
 class DRSGetNCChanges(NDRCALL):
     opnum = 3
@@ -1220,6 +1314,7 @@ class DRSDomainControllerInfoResponse(NDRCALL):
 ################################################################################
 OPNUMS = {
  0 : (DRSBind,DRSBindResponse ),
+ 1 : (DRSUnbind,DRSUnbindResponse ),
  3 : (DRSGetNCChanges,DRSGetNCChangesResponse ),
  12: (DRSCrackNames,DRSCrackNamesResponse ),
  16: (DRSDomainControllerInfo,DRSDomainControllerInfoResponse ),
@@ -1236,6 +1331,11 @@ def checkNullString(string):
         return string + '\x00'
     else:
         return string
+
+def hDRSUnbind(dce, hDrs):
+    request = DRSUnbind()
+    request['phDrs'] = hDrs
+    return dce.request(request)
 
 def hDRSDomainControllerInfo(dce, hDrs, domain, infoLevel):
     request = DRSDomainControllerInfo()
@@ -1266,23 +1366,6 @@ def hDRSCrackNames(dce, hDrs, flags, formatOffered, formatDesired, rpNames = ())
 
     return dce.request(request)
 
-def transformKey(InputKey):
-        # Section 2.2.11.1.2 Encrypting a 64-Bit Block with a 7-Byte Key
-        OutputKey = []
-        OutputKey.append( chr(ord(InputKey[0]) >> 0x01) )
-        OutputKey.append( chr(((ord(InputKey[0])&0x01)<<6) | (ord(InputKey[1])>>2)) )
-        OutputKey.append( chr(((ord(InputKey[1])&0x03)<<5) | (ord(InputKey[2])>>3)) )
-        OutputKey.append( chr(((ord(InputKey[2])&0x07)<<4) | (ord(InputKey[3])>>4)) )
-        OutputKey.append( chr(((ord(InputKey[3])&0x0F)<<3) | (ord(InputKey[4])>>5)) )
-        OutputKey.append( chr(((ord(InputKey[4])&0x1F)<<2) | (ord(InputKey[5])>>6)) )
-        OutputKey.append( chr(((ord(InputKey[5])&0x3F)<<1) | (ord(InputKey[6])>>7)) )
-        OutputKey.append( chr(ord(InputKey[6]) & 0x7F) )
-
-        for i in range(8):
-            OutputKey[i] = chr((ord(OutputKey[i]) << 1) & 0xfe)
-
-        return "".join(OutputKey)
-
 def deriveKey(baseKey):
         # 2.2.11.1.3 Deriving Key1 and Key2 from a Little-Endian, Unsigned Integer Key
         # Let I be the little-endian, unsigned integer.
@@ -1291,9 +1374,12 @@ def deriveKey(baseKey):
         # Key1 is a concatenation of the following values: I[0], I[1], I[2], I[3], I[0], I[1], I[2].
         # Key2 is a concatenation of the following values: I[3], I[0], I[1], I[2], I[3], I[0], I[1]
         key = pack('<L',baseKey)
-        key1 = key[0] + key[1] + key[2] + key[3] + key[0] + key[1] + key[2]
-        key2 = key[3] + key[0] + key[1] + key[2] + key[3] + key[0] + key[1]
-        return transformKey(key1),transformKey(key2)
+        key1 = [key[0] , key[1] , key[2] , key[3] , key[0] , key[1] , key[2]]
+        key2 = [key[3] , key[0] , key[1] , key[2] , key[3] , key[0] , key[1]]
+        if PY2:
+            return transformKey(b''.join(key1)),transformKey(b''.join(key2))
+        else:
+            return transformKey(bytes(key1)),transformKey(bytes(key2))
 
 def removeDESLayer(cryptedHash, rid):
         Key1,Key2 = deriveKey(rid)
@@ -1377,7 +1463,7 @@ def MakeAttid(prefixTable, oid):
 
 def OidFromAttid(prefixTable, attr):
     # separate the ATTRTYP into two parts
-    upperWord = attr / 65536
+    upperWord = attr // 65536
     lowerWord = attr % 65536
 
     # search in the prefix table to find the upperWord, if found,
@@ -1389,18 +1475,17 @@ def OidFromAttid(prefixTable, attr):
         if item['ndx'] == upperWord:
             binaryOID = item['prefix']['elements'][:item['prefix']['length']]
             if lowerWord < 128:
-                binaryOID.append(chr(lowerWord))
+                binaryOID.append(pack('B',lowerWord))
             else:
                 if lowerWord >= 32768:
                     lowerWord -= 32768
-                binaryOID.append(chr(((lowerWord/128) % 128)+128))
-                binaryOID.append(chr(lowerWord%128))
+                binaryOID.append(pack('B',(((lowerWord//128) % 128)+128)))
+                binaryOID.append(pack('B',(lowerWord%128)))
             break
 
     if binaryOID is None:
         return None
-
-    return str(decoder.decode('\x06' + chr(len(binaryOID)) + ''.join(binaryOID), asn1Spec = univ.ObjectIdentifier())[0])
+    return str(decoder.decode(b'\x06' + pack('B',(len(binaryOID))) + b''.join(binaryOID), asn1Spec = univ.ObjectIdentifier())[0])
 
 if __name__ == '__main__':
     prefixTable = []
@@ -1411,22 +1496,22 @@ if __name__ == '__main__':
     oid4 = '1.2.840.113556.1.5.7000.53'
 
     o0 = MakeAttid(prefixTable, oid0)
-    print hex(o0)
+    print(hex(o0))
     o1 = MakeAttid(prefixTable, oid1)
-    print hex(o1)
+    print(hex(o1))
     o2 = MakeAttid(prefixTable, oid2)
-    print hex(o2)
+    print(hex(o2))
     o3 = MakeAttid(prefixTable, oid3)
-    print hex(o3)
+    print(hex(o3))
     o4 = MakeAttid(prefixTable, oid4)
-    print hex(o4)
+    print(hex(o4))
     jj = OidFromAttid(prefixTable, o0)
-    print jj
+    print(jj)
     jj = OidFromAttid(prefixTable, o1)
-    print jj
+    print(jj)
     jj = OidFromAttid(prefixTable, o2)
-    print jj
+    print(jj)
     jj = OidFromAttid(prefixTable, o3)
-    print jj
+    print(jj)
     jj = OidFromAttid(prefixTable, o4)
-    print jj
+    print(jj)

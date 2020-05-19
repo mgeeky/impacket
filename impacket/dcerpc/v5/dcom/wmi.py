@@ -1,4 +1,4 @@
-# Copyright (c) 2003-2016 CORE Security Technologies
+# SECUREAUTH LABS. Copyright 2018 SecureAuth Corporation. All rights reserved.
 #
 # This software is provided under under a slightly modified version
 # of the Apache Software License. See the accompanying LICENSE file
@@ -11,15 +11,18 @@
 #
 #   Best way to learn how to use these calls is to grab the protocol standard
 #   so you understand what the call does, and then read the test case located
-#   at https://github.com/CoreSecurity/impacket/tree/master/impacket/testcases/SMB_RPC
+#   at https://github.com/SecureAuthCorp/impacket/tree/master/tests/SMB_RPC
 #
 #   Since DCOM is like an OO RPC, instead of helper functions you will see the 
 #   classes described in the standards developed. 
 #   There are test cases for them too. 
 #
+from __future__ import division
+from __future__ import print_function
 from struct import unpack, calcsize, pack
 from functools import partial
 import collections
+import logging
 
 from impacket.dcerpc.v5.ndr import NDRSTRUCT, NDRUniConformantArray, NDRPOINTER, NDRUniConformantVaryingArray, NDRUNION, \
     NDRENUM
@@ -31,17 +34,17 @@ from impacket.dcerpc.v5.enum import Enum
 from impacket.dcerpc.v5.rpcrt import DCERPCException
 from impacket import hresult_errors, LOG
 from impacket.uuid import string_to_bin, uuidtup_to_bin
-from impacket.structure import Structure
+from impacket.structure import Structure, hexdump
 
 
 def format_structure(d, level=0):
     x = ""
     if isinstance(d, collections.Mapping):
-        lenk = max(map(lambda x: len(str(x)), d.keys()))
-        for k, v in d.items():
+        lenk = max([len(str(x)) for x in list(d.keys())])
+        for k, v in list(d.items()):
             key_text = "\n" + " "*level + " "*(lenk - len(str(k))) + str(k)
             x += key_text + ": " + format_structure(v, level=level+lenk)
-    elif isinstance(d, collections.Iterable) and not isinstance(d, basestring):
+    elif isinstance(d, collections.Iterable) and not isinstance(d, str):
         for e in d:
             x += "\n" + " "*level + "- " + format_structure(e, level=level+4)
     else:
@@ -60,7 +63,7 @@ class DCERPCSessionError(DCERPCException):
         DCERPCException.__init__(self, error_string, error_code, packet)
 
     def __str__( self ):
-        if hresult_errors.ERROR_MESSAGES.has_key(self.error_code):
+        if self.error_code in hresult_errors.ERROR_MESSAGES:
             error_msg_short = hresult_errors.ERROR_MESSAGES[self.error_code][0]
             error_msg_verbose = hresult_errors.ERROR_MESSAGES[self.error_code][1] 
             return 'WMI SessionError: code: 0x%x - %s - %s' % (self.error_code, error_msg_short, error_msg_verbose)
@@ -136,20 +139,26 @@ class ENCODED_STRING(Structure):
             # Let's first check the commonHdr
             self.fromString(data)
             self.structure = ()
+            self.isUnicode = False
             if len(data) > 1:
                 if self['Encoded_String_Flag'] == 0:
                     self.structure += self.tascii
                     # Let's search for the end of the string
-                    index = data[1:].find('\x00')
+                    index = data[1:].find(b'\x00')
                     data  = data[:index+1+1]
                 else:
                     self.structure = self.tunicode
-                    index = data[1:].find('\x00\x00')
-                    data = data[:index+1+2]
-            self.fromString(data)
+                    self.isUnicode = True
+
+                self.fromString(data)
         else:
             self.structure = self.tascii
             self.data = None
+
+    def __getitem__(self, key):
+        if key == 'Character' and self.isUnicode:
+            return self.fields['Character'].decode('utf-16le')
+        return Structure.__getitem__(self, key)
 
 
 # 2.2.8 DecServerName
@@ -311,7 +320,17 @@ class ENCODED_VALUE(Structure):
                     for _ in range(numItems):
                         item = ENCODED_STRING(heapData)
                         array.append(item['Character'])
-                        heapData = heapData[len(str(item)):]
+                        heapData = heapData[len(item.getData()):]
+                elif cimType == CIM_TYPE_ENUM.CIM_ARRAY_OBJECT.value:
+                    # Discard the pointers
+                    heapData = heapData[dataSize*numItems:]
+                    for item in range(numItems):
+                        msb = METHOD_SIGNATURE_BLOCK(heapData)
+                        unit = ENCODING_UNIT()
+                        unit['ObjectEncodingLength'] = msb['EncodingLength']
+                        unit['ObjectBlock'] = msb['ObjectBlock']
+                        array.append(unit)
+                        heapData = heapData[msb['EncodingLength']+4:]
                 else:
                     for item in range(numItems):
                         # ToDo: Learn to unpack the rest of the array of things
@@ -323,11 +342,28 @@ class ENCODED_VALUE(Structure):
                     value = 'True'
                 else:
                     value = 'False'
+            elif pType == CIM_TYPE_ENUM.CIM_TYPE_OBJECT.value:
+                # If the value type is CIM-TYPE-OBJECT, the EncodedValue is a HeapRef to the object encoded as an
+                # ObjectEncodingLength (section 2.2.4) followed by an ObjectBlock (section 2.2.5).
+
+                # ToDo: This is a hack.. We should parse this better. We need to have an ENCODING_UNIT.
+                # I'm going through a METHOD_SIGNATURE_BLOCK first just to parse the ObjectBlock
+                msb = METHOD_SIGNATURE_BLOCK(heapData)
+                unit = ENCODING_UNIT()
+                unit['ObjectEncodingLength'] = msb['EncodingLength']
+                unit['ObjectBlock'] = msb['ObjectBlock']
+                value = unit
             elif pType not in (CIM_TYPE_ENUM.CIM_TYPE_STRING.value, CIM_TYPE_ENUM.CIM_TYPE_DATETIME.value,
-                               CIM_TYPE_ENUM.CIM_TYPE_REFERENCE.value, CIM_TYPE_ENUM.CIM_TYPE_OBJECT.value):
+                               CIM_TYPE_ENUM.CIM_TYPE_REFERENCE.value):
                 value = entry
             else:
-                value = ENCODED_STRING(heapData)['Character']
+                try:
+                    value = ENCODED_STRING(heapData)['Character']
+                except UnicodeDecodeError:
+                    if logging.getLogger().level == logging.DEBUG:
+                        LOG.debug('Unicode Error: dumping heapData')
+                        hexdump(heapData)
+                    raise
 
             return value
 
@@ -365,7 +401,7 @@ class QUALIFIER_SET(Structure):
         while len(data) > 0:
             itemn = QUALIFIER(data)
             if itemn['QualifierName'] == 0xffffffff:
-                qName = ''
+                qName = b''
             elif itemn['QualifierName'] & 0x80000000:
                 qName = DICTIONARY_REFERENCE[itemn['QualifierName'] & 0x7fffffff]
             else:
@@ -473,7 +509,7 @@ class PROPERTY_LOOKUP_TABLE(Structure):
 
             propTable = propTable[self.PropertyLookupSize:]
 
-        return OrderedDict(sorted(properties.items(), key=lambda x:x[1]['order']))
+        return OrderedDict(sorted(list(properties.items()), key=lambda x:x[1]['order']))
         #return properties
 
 # 2.2.66 Heap
@@ -503,7 +539,7 @@ class CLASS_PART(Structure):
         ('NdTable_ValueTable',':'),
         ('ClassHeap', ':', CLASS_HEAP),
         ('_Garbage', '_-Garbage', 'self["ClassHeader"]["EncodingLength"]-len(self)'),
-        ('Garbage', ':=""'),
+        ('Garbage', ':=b""'),
     )
     def getQualifiers(self):
         return self["ClassQualifierSet"].getQualifiers(self["ClassHeap"]["HeapItem"])
@@ -511,8 +547,8 @@ class CLASS_PART(Structure):
     def getProperties(self):
         heap = self["ClassHeap"]["HeapItem"]
         properties =  self["PropertyLookupTable"].getProperties(self["ClassHeap"]["HeapItem"])
-        sorted_props = sorted(properties.keys(), key=lambda k: properties[k]['order'])
-        valueTableOff = (len(properties) - 1) / 4 + 1
+        sorted_props = sorted(list(properties.keys()), key=lambda k: properties[k]['order'])
+        valueTableOff = (len(properties) - 1) // 4 + 1
         valueTable = self['NdTable_ValueTable'][valueTableOff:]
         for key in sorted_props:
             # Let's get the default Values
@@ -547,7 +583,7 @@ METHOD_NAME = HEAP_STRING_REF
 METHOD_FLAGS = 'B=0'
 
 # 2.2.44 MethodPadding
-METHOD_PADDING = "3s=''"
+METHOD_PADDING = "3s=b''"
 
 # 2.2.45 MethodOrigin
 METHOD_ORIGIN = '<L=0'
@@ -713,7 +749,7 @@ class INSTANCE_PROP_QUALIFIER_SET(Structure):
             self.fromString(data)
             if self['InstPropQualSetFlag'] == 2:
                 # We don't support this yet!
-                raise
+                raise Exception("self['InstPropQualSetFlag'] == 2")
             self.fromString(data)
         else:
             self.data = None
@@ -749,7 +785,7 @@ class INSTANCE_TYPE(Structure):
             # Let's first check the commonHdr
             self.fromString(data)
             #hexdump(data[len(self.getData()):])
-            self.NdTableSize = (self['CurrentClass']['ClassPart']['PropertyLookupTable']['PropertyCount'] - 1) /4 + 1
+            self.NdTableSize = (self['CurrentClass']['ClassPart']['PropertyLookupTable']['PropertyCount'] - 1) //4 + 1
             #self.InstanceDataSize = self['CurrentClass']['ClassPart']['PropertyLookupTable']['PropertyCount'] * len(InstanceData())
             self.fromString(data)
         else:
@@ -757,9 +793,9 @@ class INSTANCE_TYPE(Structure):
 
     def getValues(self, properties):
         heap = self["InstanceHeap"]["HeapItem"]
-        valueTableOff = (len(properties) - 1) / 4 + 1
+        valueTableOff = (len(properties) - 1) // 4 + 1
         valueTable = self['NdTable_ValueTable'][valueTableOff:]
-        sorted_props = sorted(properties.keys(), key=lambda k: properties[k]['order'])
+        sorted_props = sorted(list(properties.keys()), key=lambda k: properties[k]['order'])
         for key in sorted_props:
             pType = properties[key]['type'] & (~(CIM_ARRAY_FLAG|Inherited))
             if properties[key]['type'] & CIM_ARRAY_FLAG:
@@ -776,10 +812,11 @@ class INSTANCE_TYPE(Structure):
             # if itemValue == 0, default value remains
             if itemValue != 0:
                 value = ENCODED_VALUE.getValue( properties[key]['type'], itemValue, heap)
-            else:
-                value = 0
-            properties[key]['value'] = value
-            valueTable = valueTable[dataSize:] 
+                properties[key]['value'] = value
+            # is the value set valid or should we clear it? ( if not inherited )
+            elif properties[key]['inherited'] == 0:
+                properties[key]['value'] = None
+            valueTable = valueTable[dataSize:]
         return properties
 
 # 2.2.12 ParentClass
@@ -818,10 +855,10 @@ class OBJECT_BLOCK(Structure):
 
         if data is not None:
             self.structure = ()
-            if ord(data[0]) & 0x4: 
+            if ord(data[0:1]) & 0x4:
                 # WMIO - 2.2.6 - 0x04 If this flag is set, the object has a Decoration block.
                 self.structure += self.decoration
-            if ord(data[0]) & 0x01:
+            if ord(data[0:1]) & 0x01:
                 # The object is a CIM class. 
                 self.structure += self.classType
             else:
@@ -840,11 +877,11 @@ class OBJECT_BLOCK(Structure):
         qualifiers = pClass.getQualifiers()
 
         for qualifier in qualifiers:
-            print "[%s]" % qualifier
+            print("[%s]" % qualifier)
 
         className = pClass.getClassName()
 
-        print "class %s \n{" % className
+        print("class %s \n{" % className)
 
         properties = pClass.getProperties()
         if cInstance is not None:
@@ -855,44 +892,52 @@ class OBJECT_BLOCK(Structure):
                 qualifiers = properties[pName]['qualifiers']
                 for qName in qualifiers:
                     if qName != 'CIMTYPE':
-                        print '\t[%s(%s)]' % (qName, qualifiers[qName])
-                print "\t%s %s" % (properties[pName]['stype'], properties[pName]['name']),
+                        print('\t[%s(%s)]' % (qName, qualifiers[qName]))
+                print("\t%s %s" % (properties[pName]['stype'], properties[pName]['name']), end=' ')
                 if properties[pName]['value'] is not None:
-                    print '= %s\n' % properties[pName]['value']
+                    if properties[pName]['type'] == CIM_TYPE_ENUM.CIM_TYPE_OBJECT.value:
+                        print('= IWbemClassObject\n')
+                    elif properties[pName]['type'] == CIM_TYPE_ENUM.CIM_ARRAY_OBJECT.value:
+                        if properties[pName]['value'] == 0:
+                            print('= %s\n' % properties[pName]['value'])
+                        else:
+                            print('= %s\n' % list('IWbemClassObject' for _ in range(len(properties[pName]['value']))))
+                    else:
+                        print('= %s\n' % properties[pName]['value'])
                 else:
-                    print '\n'
+                    print('\n')
 
-        print 
+        print() 
         methods = pClass.getMethods()
         for methodName in methods:
             for qualifier in methods[methodName]['qualifiers']:
-                print '\t[%s]' % qualifier
+                print('\t[%s]' % qualifier)
 
             if methods[methodName]['InParams'] is None and methods[methodName]['OutParams'] is None: 
-                print '\t%s %s();\n' % ('void', methodName)
+                print('\t%s %s();\n' % ('void', methodName))
             if methods[methodName]['InParams'] is None and len(methods[methodName]['OutParams']) == 1:
-                print '\t%s %s();\n' % (methods[methodName]['OutParams']['ReturnValue']['stype'], methodName)
+                print('\t%s %s();\n' % (methods[methodName]['OutParams']['ReturnValue']['stype'], methodName))
             else:
-                returnValue = ''
+                returnValue = b''
                 if methods[methodName]['OutParams'] is not None:
                     # Search the Return Value
                     #returnValue = (item for item in method['OutParams'] if item["name"] == "ReturnValue").next()
-                    if methods[methodName]['OutParams'].has_key('ReturnValue'):
+                    if 'ReturnValue' in methods[methodName]['OutParams']:
                         returnValue = methods[methodName]['OutParams']['ReturnValue']['stype']
  
-                print '\t%s %s(\n' % (returnValue, methodName),
+                print('\t%s %s(\n' % (returnValue, methodName), end=' ')
                 if methods[methodName]['InParams'] is not None:
                     for pName  in methods[methodName]['InParams']:
-                        print '\t\t[in]    %s %s,' % (methods[methodName]['InParams'][pName]['stype'], pName)
+                        print('\t\t[in]    %s %s,' % (methods[methodName]['InParams'][pName]['stype'], pName))
 
                 if methods[methodName]['OutParams'] is not None:
                     for pName in methods[methodName]['OutParams']:
                         if pName != 'ReturnValue':
-                            print '\t\t[out]    %s %s,' % (methods[methodName]['OutParams'][pName]['stype'], pName)
+                            print('\t\t[out]    %s %s,' % (methods[methodName]['OutParams'][pName]['stype'], pName))
 
-                print '\t);\n'
+                print('\t);\n')
 
-        print "}"
+        print("}")
 
     def parseClass(self, pClass, cInstance = None):
         classDict = OrderedDict()
@@ -1241,7 +1286,7 @@ class WBEMOBJECT_INSTANCE(Structure):
     structure = (
         ('dwSizeOfHeader', '<L=0x18'),
         ('dwSizeOfData', '<L','len(self["ObjectData"])'),
-        ('classID', '16s="\x00"*16'),
+        ('classID', '16s=b"\x00"*16'),
         ('_ObjectData', '_-ObjectData', 'self["dwSizeOfData"]'),
         ('ObjectData', ':'),
     )
@@ -1251,7 +1296,7 @@ class WBEMOBJECT_INSTANCE_NOCLASS(Structure):
     structure = (
         ('dwSizeOfHeader', '<L=0x18'),
         ('dwSizeOfData', '<L','len(self["ObjectData"])'),
-        ('classID', '16s="\x00"*16'),
+        ('classID', '16s=b"\x00"*16'),
         ('_ObjectData', '_-ObjectData', 'self["dwSizeOfData"]'),
         ('ObjectData', ':'),
     )
@@ -2265,7 +2310,7 @@ class IWbemClassObject(IRemUnknown):
             # Let's see if there's a key property so we can ExecMethod
             keyProperty = None
             for pName in properties:
-                if properties[pName]['qualifiers'].has_key('key'):
+                if 'key' in properties[pName]['qualifiers']:
                     keyProperty = pName
 
             if keyProperty is None:
@@ -2275,7 +2320,7 @@ class IWbemClassObject(IRemUnknown):
                     classObject,_ = self.__iWbemServices.GetObject(self.getClassName())
                     self.__methods = classObject.getMethods()
 
-                if self.__methods.has_key(attr):
+                if attr in self.__methods:
                     # Now we gotta build the class name to be called through ExecMethod
                     if self.getProperties()[keyProperty]['stype'] != 'string':
                         instanceName = '%s.%s=%s' % (
@@ -2321,17 +2366,18 @@ class IWbemClassObject(IRemUnknown):
         # we need to update the values
         # That's what we'll do
 
-        instanceHeap = ''
-        valueTable = ''
+        instanceHeap = b''
+        valueTable = b''
         ndTable = 0
         parametersClass = ENCODED_STRING()
         parametersClass['Character'] = self.getClassName()
-        instanceHeap += str(parametersClass)
+        instanceHeap += parametersClass.getData()
         curHeapPtr = len(instanceHeap)
         properties = self.getProperties()
         for i, propName in enumerate(properties):
             propRecord = properties[propName]
             itemValue = getattr(self, propName)
+            print("PropName %r, Value: %r" % (propName,itemValue))
 
             pType = propRecord['type'] & (~(CIM_ARRAY_FLAG|Inherited)) 
             if propRecord['type'] & CIM_ARRAY_FLAG:
@@ -2347,10 +2393,10 @@ class IWbemClassObject(IRemUnknown):
                     valueTable += pack('<L', curHeapPtr)
                     arraySize = pack(HEAPREF[:-2], len(itemValue))
                     packStrArray =  CIM_TYPES_REF[pType][:-2]
-                    arrayItems = ''
+                    arrayItems = b''
                     for j in range(len(itemValue)):
                         arrayItems += pack(packStrArray, itemValue[j])
-                    instanceHeap += arraySize + str(arrayItems)
+                    instanceHeap += arraySize + arrayItems
                     curHeapPtr = len(instanceHeap)
             elif pType not in (CIM_TYPE_ENUM.CIM_TYPE_STRING.value, CIM_TYPE_ENUM.CIM_TYPE_DATETIME.value,
                                CIM_TYPE_ENUM.CIM_TYPE_REFERENCE.value, CIM_TYPE_ENUM.CIM_TYPE_OBJECT.value):
@@ -2360,24 +2406,24 @@ class IWbemClassObject(IRemUnknown):
                     valueTable += pack(packStr, itemValue)
             elif pType == CIM_TYPE_ENUM.CIM_TYPE_OBJECT.value:
                 # For now we just pack None
-                valueTable += '\x00'*4 
+                valueTable += b'\x00'*4
                 # The default property value is NULL, and it is 
                 # inherited from a parent class.
                 if itemValue is None:
                     ndTable |= 3 << (2*i)
             else:
-                if itemValue is '':
+                if itemValue == '':
                     ndTable |= 1 << (2*i)
                     valueTable += pack('<L', 0)
                 else:
                     strIn = ENCODED_STRING()
                     strIn['Character'] = itemValue
                     valueTable += pack('<L', curHeapPtr)
-                    instanceHeap += str(strIn)
+                    instanceHeap += strIn.getData()
                     curHeapPtr = len(instanceHeap)
 
-        ndTableLen = (len(properties) - 1) / 4 + 1
-        packedNdTable = ''
+        ndTableLen = (len(properties) - 1) // 4 + 1
+        packedNdTable = b''
         for i in range(ndTableLen):
             packedNdTable += pack('B', ndTable & 0xff)
             ndTable >>=  8
@@ -2388,7 +2434,7 @@ class IWbemClassObject(IRemUnknown):
         encodingUnit = ENCODING_UNIT(objRef['pObjectData'])
 
         currentClass = encodingUnit['ObjectBlock']['InstanceType']['CurrentClass']
-        encodingUnit['ObjectBlock']['InstanceType']['CurrentClass'] = ''
+        encodingUnit['ObjectBlock']['InstanceType']['CurrentClass'] = b''
 
         encodingUnit['ObjectBlock']['InstanceType']['NdTable_ValueTable'] = packedNdTable + valueTable
         encodingUnit['ObjectBlock']['InstanceType']['InstanceHeap']['HeapLength'] = len(instanceHeap) | 0x80000000
@@ -2401,34 +2447,34 @@ class IWbemClassObject(IRemUnknown):
 
         #encodingUnit.dump()
         #ENCODING_UNIT(str(encodingUnit)).dump()
-        
+
         objRef['pObjectData'] = encodingUnit
- 
+
         return objRef
 
     def SpawnInstance(self):
         # Doing something similar to:
-        # http://msdn.microsoft.com/en-us/library/aa391458(v=vs.85).aspx
-        # 
+        # https://docs.microsoft.com/windows/desktop/api/wbemcli/nf-wbemcli-iwbemclassobject-spawninstance
+        #
         if self.encodingUnit['ObjectBlock'].isInstance() is False:
             # We need to convert some things to transform a class into an instance
             encodingUnit = ENCODING_UNIT()
-                        
+
             instanceData = OBJECT_BLOCK()
             instanceData.structure += OBJECT_BLOCK.decoration
             instanceData.structure += OBJECT_BLOCK.instanceType
             instanceData['ObjectFlags'] = 6
-            instanceData['Decoration'] = str(self.encodingUnit['ObjectBlock']['Decoration'])
+            instanceData['Decoration'] = self.encodingUnit['ObjectBlock']['Decoration'].getData()
 
             instanceType = INSTANCE_TYPE()
-            instanceType['CurrentClass'] = ''
+            instanceType['CurrentClass'] = b''
 
             # Let's create the heap for the parameters
-            instanceHeap = ''
-            valueTable = ''
+            instanceHeap = b''
+            valueTable = b''
             parametersClass = ENCODED_STRING()
             parametersClass['Character'] = self.getClassName()
-            instanceHeap += str(parametersClass)
+            instanceHeap += parametersClass.getData()
             curHeapPtr = len(instanceHeap)
 
             ndTable = 0
@@ -2454,7 +2500,7 @@ class IWbemClassObject(IRemUnknown):
                     valueTable += pack(packStr, 0)
                 elif pType == CIM_TYPE_ENUM.CIM_TYPE_OBJECT.value:
                     # For now we just pack None
-                    valueTable += '\x00'*4 
+                    valueTable += b'\x00'*4
                     # The default property value is NULL, and it is 
                     # inherited from a parent class.
                     ndTable |= 3 << (2*i)
@@ -2462,18 +2508,18 @@ class IWbemClassObject(IRemUnknown):
                     strIn = ENCODED_STRING()
                     strIn['Character'] = ''
                     valueTable += pack('<L', curHeapPtr)
-                    instanceHeap += str(strIn)
+                    instanceHeap += strIn.getData()
                     curHeapPtr = len(instanceHeap)
 
-            ndTableLen = (len(properties) - 1) / 4 + 1
-            packedNdTable = ''
+            ndTableLen = (len(properties) - 1) // 4 + 1
+            packedNdTable = b''
             for i in range(ndTableLen):
                 packedNdTable += pack('B', ndTable & 0xff)
                 ndTable >>=  8
 
             instanceType['NdTable_ValueTable'] = packedNdTable + valueTable
 
-            instanceType['InstanceQualifierSet'] = '\x04\x00\x00\x00\x01'
+            instanceType['InstanceQualifierSet'] = b'\x04\x00\x00\x00\x01'
 
             instanceType['InstanceHeap'] = HEAP()
             instanceType['InstanceHeap']['HeapItem'] = instanceHeap
@@ -2481,7 +2527,7 @@ class IWbemClassObject(IRemUnknown):
             instanceType['EncodingLength'] = len(instanceType)
 
             instanceType['CurrentClass'] = self.encodingUnit['ObjectBlock']['ClassType']['CurrentClass']['ClassPart']
-            instanceData['InstanceType'] = str(instanceType)
+            instanceData['InstanceType'] = instanceType.getData()
 
             encodingUnit['ObjectBlock'] = instanceData
             encodingUnit['ObjectEncodingLength'] = len(instanceData)
@@ -2499,9 +2545,9 @@ class IWbemClassObject(IRemUnknown):
             # I will reimplement this stuff once I know it works
             import copy
             newObj = copy.deepcopy(self)
-            newObj.set_objRef(str(objRefCustomIn))
-            newObj.process_interface(str(objRefCustomIn))
-            newObj.encodingUnit = ENCODING_UNIT(str(encodingUnit))
+            newObj.set_objRef(objRefCustomIn.getData())
+            newObj.process_interface(objRefCustomIn.getData())
+            newObj.encodingUnit = ENCODING_UNIT(encodingUnit.getData())
             newObj.parseObject()
             if newObj.encodingUnit['ObjectBlock'].isInstance() is False:
                 newObj.createMethods(newObj.getClassName(), newObj.getMethods())
@@ -2514,7 +2560,37 @@ class IWbemClassObject(IRemUnknown):
 
     def createProperties(self, properties):
         for property in properties:
-            setattr(self, property, properties[property]['value'])
+            # Do we have an object property?
+            if properties[property]['type'] == CIM_TYPE_ENUM.CIM_TYPE_OBJECT.value:
+                # Yes.. let's create an Object for it too
+                objRef = OBJREF_CUSTOM()
+                objRef['iid'] = self._iid
+                objRef['clsid'] = CLSID_WbemClassObject
+                objRef['cbExtension'] = 0
+                objRef['ObjectReferenceSize'] = len(properties[property]['value'].getData())
+                objRef['pObjectData'] = properties[property]['value']
+                value = IWbemClassObject( INTERFACE(self.get_cinstance(), objRef.getData(), self.get_ipidRemUnknown(),
+                      oxid=self.get_oxid(), target=self.get_target()))
+            elif properties[property]['type'] == CIM_TYPE_ENUM.CIM_ARRAY_OBJECT.value:
+                if isinstance(properties[property]['value'], list):
+                    value = list()
+                    for item in properties[property]['value']:
+                        # Yes.. let's create an Object for it too
+                        objRef = OBJREF_CUSTOM()
+                        objRef['iid'] = self._iid
+                        objRef['clsid'] = CLSID_WbemClassObject
+                        objRef['cbExtension'] = 0
+                        objRef['ObjectReferenceSize'] = len(item.getData())
+                        objRef['pObjectData'] = item
+                        wbemClass = IWbemClassObject(
+                            INTERFACE(self.get_cinstance(), objRef.getData(), self.get_ipidRemUnknown(),
+                                      oxid=self.get_oxid(), target=self.get_target()))
+                        value.append(wbemClass)
+                else:
+                    value = properties[property]['value']
+            else:
+                value = properties[property]['value']
+            setattr(self, property, value)
 
     def createMethods(self, classOrInstance, methods):
         class FunctionPool:
@@ -2537,23 +2613,23 @@ class IWbemClassObject(IRemUnknown):
                 inParams = OBJECT_BLOCK()
                 inParams.structure += OBJECT_BLOCK.instanceType
                 inParams['ObjectFlags'] = 2
-                inParams['Decoration'] = ''
+                inParams['Decoration'] = b''
 
                 instanceType = INSTANCE_TYPE()
-                instanceType['CurrentClass'] = ''
-                instanceType['InstanceQualifierSet'] = '\x04\x00\x00\x00\x01'
+                instanceType['CurrentClass'] = b''
+                instanceType['InstanceQualifierSet'] = b'\x04\x00\x00\x00\x01'
 
                 # Let's create the heap for the parameters
-                instanceHeap = ''
-                valueTable = ''
+                instanceHeap = b''
+                valueTable = b''
                 parametersClass = ENCODED_STRING()
                 parametersClass['Character'] = '__PARAMETERS'
-                instanceHeap += str(parametersClass)
+                instanceHeap += parametersClass.getData()
                 curHeapPtr = len(instanceHeap)
 
                 ndTable = 0
                 for i in range(len(args)):
-                    paramDefinition = methodDefinition['InParams'].values()[i]
+                    paramDefinition = list(methodDefinition['InParams'].values())[i]
                     inArg = args[i]
 
                     pType = paramDefinition['type'] & (~(CIM_ARRAY_FLAG|Inherited)) 
@@ -2572,27 +2648,35 @@ class IWbemClassObject(IRemUnknown):
                         else:
                             # ToDo
                             # Not yet ready
-                            raise
+                            raise Exception('inArg not None')
                     elif pType not in (CIM_TYPE_ENUM.CIM_TYPE_STRING.value, CIM_TYPE_ENUM.CIM_TYPE_DATETIME.value,
                                        CIM_TYPE_ENUM.CIM_TYPE_REFERENCE.value, CIM_TYPE_ENUM.CIM_TYPE_OBJECT.value):
                         valueTable += pack(packStr, inArg)
                     elif pType == CIM_TYPE_ENUM.CIM_TYPE_OBJECT.value:
                         # For now we just pack None
-                        valueTable += '\x00'*4 
+                        valueTable += b'\x00'*4
                         # The default property value is NULL, and it is 
                         # inherited from a parent class.
                         if inArg is None:
                             ndTable |= 3 << (2*i)
                     else:
                         strIn = ENCODED_STRING()
-                        strIn['Character'] = inArg
+                        if type(inArg) is str:
+                            # The Encoded-String-Flag is set to 0x01 if the sequence of characters that follows
+                            # consists of UTF-16 characters (as specified in [UNICODE]) followed by a UTF-16 null
+                            # terminator.
+                            strIn['Encoded_String_Flag'] = 0x1
+                            strIn.structure = strIn.tunicode
+                            strIn['Character'] = inArg.encode('utf-16le')
+                        else:
+                            strIn['Character'] = inArg
                         valueTable += pack('<L', curHeapPtr)
-                        instanceHeap += str(strIn)
+                        instanceHeap += strIn.getData()
                         curHeapPtr = len(instanceHeap)
 
-                ndTableLen = (len(args) - 1) / 4 + 1
+                ndTableLen = (len(args) - 1) // 4 + 1
 
-                packedNdTable = ''
+                packedNdTable = b''
                 for i in range(ndTableLen):
                     packedNdTable += pack('B', ndTable & 0xff)
                     ndTable >>=  8
@@ -2607,10 +2691,10 @@ class IWbemClassObject(IRemUnknown):
                 instanceType['EncodingLength'] = len(instanceType)
                 inMethods = methodDefinition['InParamsRaw']['ClassType']['CurrentClass']['ClassPart']
                 inMethods['ClassHeader']['EncodingLength'] = len(
-                    str(methodDefinition['InParamsRaw']['ClassType']['CurrentClass']['ClassPart']))
+                    methodDefinition['InParamsRaw']['ClassType']['CurrentClass']['ClassPart'].getData())
                 instanceType['CurrentClass'] = inMethods
 
-                inParams['InstanceType'] = str(instanceType)
+                inParams['InstanceType'] = instanceType.getData()
 
                 encodingUnit['ObjectBlock'] = inParams
                 encodingUnit['ObjectEncodingLength'] = len(inParams)
@@ -2630,16 +2714,16 @@ class IWbemClassObject(IRemUnknown):
             outParams = OBJECT_BLOCK()
             outParams.structure += OBJECT_BLOCK.instanceType
             outParams['ObjectFlags'] = 2
-            outParams['Decoration'] = ''
+            outParams['Decoration'] = b''
 
             instanceType = INSTANCE_TYPE()
-            instanceType['CurrentClass'] = ''
-            instanceType['NdTable_ValueTable'] = ''
-            instanceType['InstanceQualifierSet'] = ''
-            instanceType['InstanceHeap'] = ''
+            instanceType['CurrentClass'] = b''
+            instanceType['NdTable_ValueTable'] = b''
+            instanceType['InstanceQualifierSet'] = b''
+            instanceType['InstanceHeap'] = b''
             instanceType['EncodingLength'] = len(instanceType)
-            instanceType['CurrentClass'] = str(methodDefinition['OutParamsRaw']['ClassType']['CurrentClass']['ClassPart'])
-            outParams['InstanceType'] = str(instanceType)
+            instanceType['CurrentClass'] = methodDefinition['OutParamsRaw']['ClassType']['CurrentClass']['ClassPart'].getData()
+            outParams['InstanceType'] = instanceType.getData()
 
 
             encodingUnit['ObjectBlock'] = outParams
@@ -2655,9 +2739,10 @@ class IWbemClassObject(IRemUnknown):
                 return self.__iWbemServices.ExecMethod(classOrInstance, methodDefinition['name'], pInParams = objRefCustomIn )
                 #return self.__iWbemServices.ExecMethod('Win32_Process.Handle="436"', methodDefinition['name'],
                 #                                       pInParams=objRefCustomIn).getObject().ctCurrent['properties']
-            except Exception, e:
-                #import traceback
-                #print traceback.print_exc()
+            except Exception as e:
+                if LOG.level == logging.DEBUG:
+                    import traceback
+                    traceback.print_exc()
                 LOG.error(str(e))
 
         for methodName in methods:
@@ -2769,7 +2854,7 @@ class IEnumWbemClassObject(IRemUnknown):
         interfaces = list()
         for interface in resp['apObjects']:
             interfaces.append(IWbemClassObject(
-                INTERFACE(self.get_cinstance(), ''.join(interface['abData']), self.get_ipidRemUnknown(),
+                INTERFACE(self.get_cinstance(), b''.join(interface['abData']), self.get_ipidRemUnknown(),
                           oxid=self.get_oxid(), target=self.get_target()), self.__iWbemServices))
 
         return interfaces
@@ -2820,7 +2905,7 @@ class IWbemServices(IRemUnknown):
         request = IWbemServices_QueryObjectSink()
         request['lFlags'] = 0
         resp = self.request(request, iid = self._iid, uuid = self.get_iPid())
-        return INTERFACE(self.get_cinstance(), ''.join(resp['ppResponseHandler']['abData']), self.get_ipidRemUnknown(),
+        return INTERFACE(self.get_cinstance(), b''.join(resp['ppResponseHandler']['abData']), self.get_ipidRemUnknown(),
                          target=self.get_target())
 
     def GetObject(self, strObjectPath, lFlags=0, pCtx=NULL):
@@ -2830,11 +2915,11 @@ class IWbemServices(IRemUnknown):
         request['pCtx'] = pCtx
         resp = self.request(request, iid = self._iid, uuid = self.get_iPid())
         ppObject = IWbemClassObject(
-            INTERFACE(self.get_cinstance(), ''.join(resp['ppObject']['abData']), self.get_ipidRemUnknown(),
+            INTERFACE(self.get_cinstance(), b''.join(resp['ppObject']['abData']), self.get_ipidRemUnknown(),
                       oxid=self.get_oxid(), target=self.get_target()), self)
         if resp['ppCallResult'] != NULL:
             ppcallResult = IWbemCallResult(
-                INTERFACE(self.get_cinstance(), ''.join(resp['ppObject']['abData']), self.get_ipidRemUnknown(),
+                INTERFACE(self.get_cinstance(), b''.join(resp['ppObject']['abData']), self.get_ipidRemUnknown(),
                           target=self.get_target()))
         else:
             ppcallResult = NULL
@@ -2910,12 +2995,12 @@ class IWbemServices(IRemUnknown):
             request['pInst'] = pInst
         else:
             request['pInst']['ulCntData'] = len(pInst)
-            request['pInst']['abData'] = list(str(pInst))
+            request['pInst']['abData'] = list(pInst.getData())
         request['lFlags'] = lFlags
         request['pCtx'] = pCtx
         resp = self.request(request, iid = self._iid, uuid = self.get_iPid())
         return IWbemCallResult(
-            INTERFACE(self.get_cinstance(), ''.join(resp['ppCallResult']['abData']), self.get_ipidRemUnknown(),
+            INTERFACE(self.get_cinstance(), b''.join(resp['ppCallResult']['abData']), self.get_ipidRemUnknown(),
                       target=self.get_target()))
 
     def PutInstanceAsync(self, pInst, lFlags=0, pCtx=NULL):
@@ -2934,7 +3019,7 @@ class IWbemServices(IRemUnknown):
         request['pCtx'] = pCtx
         resp = self.request(request, iid = self._iid, uuid = self.get_iPid())
         return IWbemCallResult(
-            INTERFACE(self.get_cinstance(), ''.join(resp['ppCallResult']['abData']), self.get_ipidRemUnknown(),
+            INTERFACE(self.get_cinstance(), b''.join(resp['ppCallResult']['abData']), self.get_ipidRemUnknown(),
                       target=self.get_target()))
 
     def DeleteInstanceAsync(self, strObjectPath, lFlags=0, pCtx=NULL):
@@ -2954,7 +3039,7 @@ class IWbemServices(IRemUnknown):
         resp = self.request(request, iid = self._iid, uuid = self.get_iPid())
         resp.dump()
         return IEnumWbemClassObject(
-            INTERFACE(self.get_cinstance(), ''.join(resp['ppEnum']['abData']), self.get_ipidRemUnknown(),
+            INTERFACE(self.get_cinstance(), b''.join(resp['ppEnum']['abData']), self.get_ipidRemUnknown(),
                       target=self.get_target()))
 
     def CreateInstanceEnumAsync(self, strSuperClass, lFlags=0, pCtx=NULL):
@@ -2975,7 +3060,7 @@ class IWbemServices(IRemUnknown):
         request['pCtx'] = pCtx
         resp = self.request(request, iid = self._iid, uuid = self.get_iPid())
         return IEnumWbemClassObject(
-            INTERFACE(self.get_cinstance(), ''.join(resp['ppEnum']['abData']), self.get_ipidRemUnknown(),
+            INTERFACE(self.get_cinstance(), b''.join(resp['ppEnum']['abData']), self.get_ipidRemUnknown(),
                       target=self.get_target()), self)
 
     def ExecQueryAsync(self, strQuery, lFlags=0, pCtx=NULL):
@@ -2996,7 +3081,7 @@ class IWbemServices(IRemUnknown):
         request['pCtx'] = pCtx
         resp = self.request(request, iid = self._iid, uuid = self.get_iPid())
         return IEnumWbemClassObject(
-            INTERFACE(self.get_cinstance(), ''.join(resp['ppEnum']['abData']), self.get_ipidRemUnknown(),
+            INTERFACE(self.get_cinstance(), b''.join(resp['ppEnum']['abData']), self.get_ipidRemUnknown(),
                       target=self.get_target()), self)
 
     def ExecNotificationQueryAsync(self, strQuery, lFlags=0, pCtx=NULL):
@@ -3019,17 +3104,17 @@ class IWbemServices(IRemUnknown):
             request['pInParams'] = pInParams
         else:
             request['pInParams']['ulCntData'] = len(pInParams)
-            request['pInParams']['abData'] = list(str(pInParams))
+            request['pInParams']['abData'] = list(pInParams.getData())
 
         request.fields['ppCallResult'] = NULL
         if ppOutParams is NULL:
             request.fields['ppOutParams'].fields['Data'] = NULL
         else:
-            request['ppOutParams']['ulCntData'] = len(str(ppOutParams))
-            request['ppOutParams']['abData'] = list(str(ppOutParams))
+            request['ppOutParams']['ulCntData'] = len(ppOutParams.getData())
+            request['ppOutParams']['abData'] = list(ppOutParams.getData())
         resp = self.request(request, iid = self._iid, uuid = self.get_iPid())
         return IWbemClassObject(
-            INTERFACE(self.get_cinstance(), ''.join(resp['ppOutParams']['abData']), self.get_ipidRemUnknown(),
+            INTERFACE(self.get_cinstance(), b''.join(resp['ppOutParams']['abData']), self.get_ipidRemUnknown(),
                       oxid=self.get_oxid(), target=self.get_target()))
 
     def ExecMethodAsync(self, strObjectPath, strMethodName, lFlags=0, pCtx=NULL, pInParams=NULL):
@@ -3079,28 +3164,27 @@ class IWbemLevel1Login(IRemUnknown):
         request['pCtx'] = pCtx
         resp = self.request(request, iid = self._iid, uuid = self.get_iPid())
         return IWbemServices(
-            INTERFACE(self.get_cinstance(), ''.join(resp['ppNamespace']['abData']), self.get_ipidRemUnknown(),
+            INTERFACE(self.get_cinstance(), b''.join(resp['ppNamespace']['abData']), self.get_ipidRemUnknown(),
                       target=self.get_target()))
 
 
 if __name__ == '__main__':
     # Example 1
-    baseClass = 'xV4\x12\xd0\x00\x00\x00\x05\x00DPRAVAT-DEV\x00\x00ROOT\x00\x1d\x00\x00\x00\x00\xff\xff\xff\xff\x00\x00\x00\x00\x04\x00\x00\x00\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x80\x0c\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x80f\x00\x00\x00\x00\x00\x00\x00\x00\x05\x00\x00\x00\x04\x00\x00\x00\x04\x00\x00\x00\x01\x00\x00\x00\x06\x00\x00\x00\n\x00\x00\x00\x05\xff\xff\xff\xff<\x00\x00\x80\x00Base\x00\x00Id\x00\x03\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x1c\x00\x00\x00\n\x00\x00\x80\x03\x08\x00\x00\x004\x00\x00\x00\x01\x00\x00\x80\x13\x0b\x00\x00\x00\xff\xff\x00sint32\x00\x0c\x00\x00\x00\x00\x004\x00\x00\x00\x00\x80\x00\x80\x13\x0b\x00\x00\x00\xff\xff\x00sint32\x00'
+    baseClass = b'xV4\x12\xd0\x00\x00\x00\x05\x00DPRAVAT-DEV\x00\x00ROOT\x00\x1d\x00\x00\x00\x00\xff\xff\xff\xff\x00\x00\x00\x00\x04\x00\x00\x00\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x80\x0c\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x80f\x00\x00\x00\x00\x00\x00\x00\x00\x05\x00\x00\x00\x04\x00\x00\x00\x04\x00\x00\x00\x01\x00\x00\x00\x06\x00\x00\x00\n\x00\x00\x00\x05\xff\xff\xff\xff<\x00\x00\x80\x00Base\x00\x00Id\x00\x03\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x1c\x00\x00\x00\n\x00\x00\x80\x03\x08\x00\x00\x004\x00\x00\x00\x01\x00\x00\x80\x13\x0b\x00\x00\x00\xff\xff\x00sint32\x00\x0c\x00\x00\x00\x00\x004\x00\x00\x00\x00\x80\x00\x80\x13\x0b\x00\x00\x00\xff\xff\x00sint32\x00'
 
-    #encodingUnit = EncodingUnit(baseClass)
+    #encodingUnit = ENCODING_UNIT(baseClass)
     #encodingUnit.dump()
     #encodingUnit['ObjectBlock'].printInformation()
     #print "LEN ", len(baseClass), len(encodingUnit)
 
-    myClass = "xV4\x12.\x02\x00\x00\x05\x00DPRAVAT-DEV\x00\x00ROOT\x00f\x00\x00\x00\x00\x00\x00\x00\x00\x05\x00\x00\x00\x04\x00\x00\x00\x04\x00\x00\x00\x01\x00\x00\x00\x06\x00\x00\x00\n\x00\x00\x00\x05\xff\xff\xff\xff<\x00\x00\x80\x00Base\x00\x00Id\x00\x03\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x1c\x00\x00\x00\n\x00\x00\x80\x03\x08\x00\x00\x004\x00\x00\x00\x01\x00\x00\x80\x13\x0b\x00\x00\x00\xff\xff\x00sint32\x00\x0c\x00\x00\x00\x00\x004\x00\x00\x00\x00\x80v\x01\x00\x00\x00\x00\x00\x00\x00\x11\x00\x00\x00\x0e\x00\x00\x00\x00Base\x00\x06\x00\x00\x00\x11\x00\x00\x00\t\x00\x00\x00\x00\x08\x00\x00\x00\x16\x00\x00\x00\x04\x00\x00\x00'\x00\x00\x00.\x00\x00\x00U\x00\x00\x00\\\x00\x00\x00\x99\x00\x00\x00\xa0\x00\x00\x00\xc7\x00\x00\x00\xcb\x00\x00\x00G\xff\xff\xff\xff\xff\xff\xff\xff\xfd\x00\x00\x00\xff\xff\xff\xff\x11\x01\x00\x80\x00MyClass\x00\x00Description\x00\x00MyClass Example\x00\x00Array\x00\x13 \x00\x00\x03\x00\x0c\x00\x00\x00\x01\x00\x00\x00\x11\x00\x00\x00\n\x00\x00\x80\x03\x08\x00\x00\x00M\x00\x00\x00\x00uint32\x00\x00Data1\x00\x08\x00\x00\x00\x01\x00\x04\x00\x00\x00\x01\x00\x00\x00'\x00\x00\x00\n\x00\x00\x80\x03\x08\x00\x00\x00\x91\x00\x00\x00\x03\x00\x00\x80\x00\x0b\x00\x00\x00\xff\xff\x04\x00\x00\x80\x00\x0b\x00\x00\x00\xff\xff\x00string\x00\x00Data2\x00\x08\x00\x00\x00\x02\x00\x08\x00\x00\x00\x01\x00\x00\x00\x11\x00\x00\x00\n\x00\x00\x80\x03\x08\x00\x00\x00\xbf\x00\x00\x00\x00string\x00\x00Id\x00\x03@\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x1c\x00\x00\x00\n\x00\x00\x80#\x08\x00\x00\x00\xf5\x00\x00\x00\x01\x00\x00\x803\x0b\x00\x00\x00\xff\xff\x00sint32\x00\x00defaultValue\x00\x00\x00\x00\x00\x00\x00\x0c\x00\x00\x00\x00\x00\x00s\x00\x00\x00\x802\x00\x00defaultValue\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x80\x00\x00\x00\x00"
+    #myClass = b"xV4\x12.\x02\x00\x00\x05\x00DPRAVAT-DEV\x00\x00ROOT\x00f\x00\x00\x00\x00\x00\x00\x00\x00\x05\x00\x00\x00\x04\x00\x00\x00\x04\x00\x00\x00\x01\x00\x00\x00\x06\x00\x00\x00\n\x00\x00\x00\x05\xff\xff\xff\xff<\x00\x00\x80\x00Base\x00\x00Id\x00\x03\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x1c\x00\x00\x00\n\x00\x00\x80\x03\x08\x00\x00\x004\x00\x00\x00\x01\x00\x00\x80\x13\x0b\x00\x00\x00\xff\xff\x00sint32\x00\x0c\x00\x00\x00\x00\x004\x00\x00\x00\x00\x80v\x01\x00\x00\x00\x00\x00\x00\x00\x11\x00\x00\x00\x0e\x00\x00\x00\x00Base\x00\x06\x00\x00\x00\x11\x00\x00\x00\t\x00\x00\x00\x00\x08\x00\x00\x00\x16\x00\x00\x00\x04\x00\x00\x00'\x00\x00\x00.\x00\x00\x00U\x00\x00\x00\\\x00\x00\x00\x99\x00\x00\x00\xa0\x00\x00\x00\xc7\x00\x00\x00\xcb\x00\x00\x00G\xff\xff\xff\xff\xff\xff\xff\xff\xfd\x00\x00\x00\xff\xff\xff\xff\x11\x01\x00\x80\x00MyClass\x00\x00Description\x00\x00MyClass Example\x00\x00Array\x00\x13 \x00\x00\x03\x00\x0c\x00\x00\x00\x01\x00\x00\x00\x11\x00\x00\x00\n\x00\x00\x80\x03\x08\x00\x00\x00M\x00\x00\x00\x00uint32\x00\x00Data1\x00\x08\x00\x00\x00\x01\x00\x04\x00\x00\x00\x01\x00\x00\x00'\x00\x00\x00\n\x00\x00\x80\x03\x08\x00\x00\x00\x91\x00\x00\x00\x03\x00\x00\x80\x00\x0b\x00\x00\x00\xff\xff\x04\x00\x00\x80\x00\x0b\x00\x00\x00\xff\xff\x00string\x00\x00Data2\x00\x08\x00\x00\x00\x02\x00\x08\x00\x00\x00\x01\x00\x00\x00\x11\x00\x00\x00\n\x00\x00\x80\x03\x08\x00\x00\x00\xbf\x00\x00\x00\x00string\x00\x00Id\x00\x03@\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x1c\x00\x00\x00\n\x00\x00\x80#\x08\x00\x00\x00\xf5\x00\x00\x00\x01\x00\x00\x803\x0b\x00\x00\x00\xff\xff\x00sint32\x00\x00defaultValue\x00\x00\x00\x00\x00\x00\x00\x0c\x00\x00\x00\x00\x00\x00s\x00\x00\x00\x802\x00\x00defaultValue\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x80\x00\x00\x00\x00"
     #hexdump(myClass)
-    #encodingUnit = EncodingUnit(myClass)
+    #encodingUnit = ENCODING_UNIT(myClass)
     #print "LEN ", len(myClass), len(encodingUnit)
     #encodingUnit.dump()
     #encodingUnit['ObjectBlock'].printInformation()
 
-    instanceMyClass = "xV4\x12\xd3\x01\x00\x00\x06\x00DPRAVAT-DEV\x00\x00ROOT\x00v\x01\x00\x00\x00\x00\x00\x00\x00\x11\x00\x00\x00\x0e\x00\x00\x00\x00Base\x00\x06\x00\x00\x00\x11\x00\x00\x00\t\x00\x00\x00\x00\x08\x00\x00\x00\x16\x00\x00\x00\x04\x00\x00\x00'\x00\x00\x00.\x00\x00\x00U\x00\x00\x00\\\x00\x00\x00\x99\x00\x00\x00\xa0\x00\x00\x00\xc7\x00\x00\x00\xcb\x00\x00\x00G\xff\xff\xff\xff\xff\xff\xff\xff\xfd\x00\x00\x00\xff\xff\xff\xff\x11\x01\x00\x80\x00MyClass\x00\x00Description\x00\x00MyClass Example\x00\x00Array\x00\x13 \x00\x00\x03\x00\x0c\x00\x00\x00\x01\x00\x00\x00\x11\x00\x00\x00\n\x00\x00\x80\x03\x08\x00\x00\x00M\x00\x00\x00\x00uint32\x00\x00Data1\x00\x08\x00\x00\x00\x01\x00\x04\x00\x00\x00\x01\x00\x00\x00'\x00\x00\x00\n\x00\x00\x80\x03\x08\x00\x00\x00\x91\x00\x00\x00\x03\x00\x00\x80\x00\x0b\x00\x00\x00\xff\xff\x04\x00\x00\x80\x00\x0b\x00\x00\x00\xff\xff\x00string\x00\x00Data2\x00\x08\x00\x00\x00\x02\x00\x08\x00\x00\x00\x01\x00\x00\x00\x11\x00\x00\x00\n\x00\x00\x80\x03\x08\x00\x00\x00\xbf\x00\x00\x00\x00string\x00\x00Id\x00\x03@\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x1c\x00\x00\x00\n\x00\x00\x80#\x08\x00\x00\x00\xf5\x00\x00\x00\x01\x00\x00\x803\x0b\x00\x00\x00\xff\xff\x00sint32\x00\x00defaultValue\x00\x00\x00\x00\x00\x00\x00I\x00\x00\x00\x00\x00\x00\x00\x00 {\x00\x00\x00\x19\x00\x00\x00\x00\x00\x00\x00\t\x00\x00\x00\x04\x00\x00\x00\x01&\x00\x00\x80\x00MyClass\x00\x03\x00\x00\x00\x01\x00\x00\x00\x02\x00\x00\x00\x03\x00\x00\x00\x00StringField\x00"
-    #encodingUnit = EncodingUnit(instanceMyClass)
+    #instanceMyClass = b"xV4\x12\xd3\x01\x00\x00\x06\x00DPRAVAT-DEV\x00\x00ROOT\x00v\x01\x00\x00\x00\x00\x00\x00\x00\x11\x00\x00\x00\x0e\x00\x00\x00\x00Base\x00\x06\x00\x00\x00\x11\x00\x00\x00\t\x00\x00\x00\x00\x08\x00\x00\x00\x16\x00\x00\x00\x04\x00\x00\x00'\x00\x00\x00.\x00\x00\x00U\x00\x00\x00\\\x00\x00\x00\x99\x00\x00\x00\xa0\x00\x00\x00\xc7\x00\x00\x00\xcb\x00\x00\x00G\xff\xff\xff\xff\xff\xff\xff\xff\xfd\x00\x00\x00\xff\xff\xff\xff\x11\x01\x00\x80\x00MyClass\x00\x00Description\x00\x00MyClass Example\x00\x00Array\x00\x13 \x00\x00\x03\x00\x0c\x00\x00\x00\x01\x00\x00\x00\x11\x00\x00\x00\n\x00\x00\x80\x03\x08\x00\x00\x00M\x00\x00\x00\x00uint32\x00\x00Data1\x00\x08\x00\x00\x00\x01\x00\x04\x00\x00\x00\x01\x00\x00\x00'\x00\x00\x00\n\x00\x00\x80\x03\x08\x00\x00\x00\x91\x00\x00\x00\x03\x00\x00\x80\x00\x0b\x00\x00\x00\xff\xff\x04\x00\x00\x80\x00\x0b\x00\x00\x00\xff\xff\x00string\x00\x00Data2\x00\x08\x00\x00\x00\x02\x00\x08\x00\x00\x00\x01\x00\x00\x00\x11\x00\x00\x00\n\x00\x00\x80\x03\x08\x00\x00\x00\xbf\x00\x00\x00\x00string\x00\x00Id\x00\x03@\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x1c\x00\x00\x00\n\x00\x00\x80#\x08\x00\x00\x00\xf5\x00\x00\x00\x01\x00\x00\x803\x0b\x00\x00\x00\xff\xff\x00sint32\x00\x00defaultValue\x00\x00\x00\x00\x00\x00\x00I\x00\x00\x00\x00\x00\x00\x00\x00 {\x00\x00\x00\x19\x00\x00\x00\x00\x00\x00\x00\t\x00\x00\x00\x04\x00\x00\x00\x01&\x00\x00\x80\x00MyClass\x00\x03\x00\x00\x00\x01\x00\x00\x00\x02\x00\x00\x00\x03\x00\x00\x00\x00StringField\x00"
+    #encodingUnit = ENCODING_UNIT(instanceMyClass)
     #encodingUnit.dump()
     #encodingUnit['ObjectBlock'].printInformation()
-

@@ -1,5 +1,4 @@
-#!/usr/bin/python
-# Copyright (c) 2003-2016 CORE Security Technologies
+# SECUREAUTH LABS. Copyright 2018 SecureAuth Corporation. All rights reserved.
 #
 # This software is provided under under a slightly modified version
 # of the Apache Software License. See the accompanying LICENSE file
@@ -21,7 +20,8 @@
 # ToDo: 
 # [ ] Parse multi-values properly
 # [ ] Support long values properly
-
+from __future__ import division
+from __future__ import print_function
 from impacket import LOG
 try:
     from collections import OrderedDict
@@ -30,9 +30,10 @@ except:
         from ordereddict.ordereddict import OrderedDict
     except:
         from ordereddict import OrderedDict
-from impacket.structure import Structure
+from impacket.structure import Structure, hexdump
 from struct import unpack
 from binascii import hexlify
+from six import b
 
 # Constants
 
@@ -165,9 +166,9 @@ StringCodePages = {
 # Structures
 
 TABLE_CURSOR = {
-    'TableData' : '',
+    'TableData' : b'',
     'FatherDataPageNumber': 0,
-    'CurrentPageData' : '',
+    'CurrentPageData' : b'',
     'CurrentTag' : 0,
 }
 
@@ -175,7 +176,7 @@ class ESENT_JET_SIGNATURE(Structure):
     structure = (
         ('Random','<L=0'),
         ('CreationTime','<Q=0'),
-        ('NetBiosName','16s=""'),
+        ('NetBiosName','16s=b""'),
     )
 
 class ESENT_DB_HEADER(Structure):
@@ -195,9 +196,9 @@ class ESENT_DB_HEADER(Structure):
         ('DetachPosition','<Q=0'),
         ('LogSignature',':',ESENT_JET_SIGNATURE),
         ('Unknown','<L=0'),
-        ('PreviousBackup','24s=""'),
-        ('PreviousIncBackup','24s=""'),
-        ('CurrentFullBackup','24s=""'),
+        ('PreviousBackup','24s=b""'),
+        ('PreviousIncBackup','24s=b""'),
+        ('CurrentFullBackup','24s=b""'),
         ('ShadowingDisables','<L=0'),
         ('LastObjectID','<L=0'),
         ('WindowsMajorVersion','<L=0'),
@@ -208,16 +209,16 @@ class ESENT_DB_HEADER(Structure):
         ('PageSize','<L=0'),
         ('RepairCount','<L=0'),
         ('RepairTime','<Q=0'),
-        ('Unknown2','28s=""'),
+        ('Unknown2','28s=b""'),
         ('ScrubTime','<Q=0'),
         ('RequiredLog','<Q=0'),
         ('UpgradeExchangeFormat','<L=0'),
         ('UpgradeFreePages','<L=0'),
         ('UpgradeSpaceMapPages','<L=0'),
-        ('CurrentShadowBackup','24s=""'),
+        ('CurrentShadowBackup','24s=b""'),
         ('CreationFileFormatVersion','<L=0'),
         ('CreationFileFormatRevision','<L=0'),
-        ('Unknown3','16s=""'),
+        ('Unknown3','16s=b""'),
         ('OldRepairCount','<L=0'),
         ('ECCCount','<L=0'),
         ('LastECCTime','<Q=0'),
@@ -229,12 +230,12 @@ class ESENT_DB_HEADER(Structure):
         ('LastBadCheckSumTime','<Q=0'),
         ('OldCheckSumErrorCount','<L=0'),
         ('CommittedLog','<L=0'),
-        ('PreviousShadowCopy','24s=""'),
-        ('PreviousDifferentialBackup','24s=""'),
-        ('Unknown4','40s=""'),
+        ('PreviousShadowCopy','24s=b""'),
+        ('PreviousDifferentialBackup','24s=b""'),
+        ('Unknown4','40s=b""'),
         ('NLSMajorVersion','<L=0'),
         ('NLSMinorVersion','<L=0'),
-        ('Unknown5','148s=""'),
+        ('Unknown5','148s=b""'),
         ('UnknownFlags','<L=0'),
     )
 
@@ -414,8 +415,7 @@ class ESENT_CATALOG_DATA_DEFINITION_ENTRY(Structure):
         elif dataType == CATALOG_TYPE_LONG_VALUE:
             self.structure += self.other + self.lv_stuff
         elif dataType == CATALOG_TYPE_CALLBACK:
-            LOG.error('CallBack types not supported!')
-            raise
+            raise Exception('CallBack types not supported!')
         else:
             LOG.error('Unknown catalog type 0x%x' % dataType)
             self.structure = ()
@@ -426,33 +426,33 @@ class ESENT_CATALOG_DATA_DEFINITION_ENTRY(Structure):
         Structure.__init__(self,data)
 
 
-def pretty_print(x):
-    if x in '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ!"#$%&\'()*+,-./:;<=>?@[\\]^_`{|}~ ':
-       return x
-    else:
-       return '.'
-
-def hexdump(data):
-    x=str(data)
-    strLen = len(x)
-    i = 0
-    while i < strLen:
-        print "%04x  " % i,
-        for j in range(16):
-            if i+j < strLen:
-                print "%02X" % ord(x[i+j]),
-
-            else:
-                print "  ",
-            if j%16 == 7:
-                print "",
-        print " ",
-        print ''.join(pretty_print(x) for x in x[i:i+16] )
-        i += 16
+#def pretty_print(x):
+#    if x in '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ!"#$%&\'()*+,-./:;<=>?@[\\]^_`{|}~ ':
+#       return x
+#    else:
+#       return '.'
+#
+#def hexdump(data):
+#    x=str(data)
+#    strLen = len(x)
+#    i = 0
+#    while i < strLen:
+#        print "%04x  " % i,
+#        for j in range(16):
+#            if i+j < strLen:
+#                print "%02X" % ord(x[i+j]),
+#
+#            else:
+#                print "  ",
+#            if j%16 == 7:
+#                print "",
+#        print " ",
+#        print ''.join(pretty_print(x) for x in x[i:i+16] )
+#        i += 16
 
 def getUnixTime(t):
     t -= 116444736000000000
-    t /= 10000000
+    t //= 10000000
     return t
 
 class ESENT_PAGE:
@@ -466,35 +466,35 @@ class ESENT_PAGE:
     def printFlags(self):
         flags = self.record['PageFlags']
         if flags & FLAGS_EMPTY:
-            print "\tEmpty"
+            print("\tEmpty")
         if flags & FLAGS_INDEX:
-            print "\tIndex"
+            print("\tIndex")
         if flags & FLAGS_LEAF:
-            print "\tLeaf"
+            print("\tLeaf")
         else:
-            print "\tBranch"
+            print("\tBranch")
         if flags & FLAGS_LONG_VALUE:
-            print "\tLong Value"
+            print("\tLong Value")
         if flags & FLAGS_NEW_CHECKSUM:
-            print "\tNew Checksum"
+            print("\tNew Checksum")
         if flags & FLAGS_NEW_FORMAT:
-            print "\tNew Format"
+            print("\tNew Format")
         if flags & FLAGS_PARENT:
-            print "\tParent"
+            print("\tParent")
         if flags & FLAGS_ROOT:
-            print "\tRoot"
+            print("\tRoot")
         if flags & FLAGS_SPACE_TREE:
-            print "\tSpace Tree"
+            print("\tSpace Tree")
 
     def dump(self):
         baseOffset = len(self.record)
         self.record.dump()
         tags = self.data[-4*self.record['FirstAvailablePageTag']:]
 
-        print "FLAGS: "
+        print("FLAGS: ")
         self.printFlags()
 
-        print
+        print()
 
         for i in range(self.record['FirstAvailablePageTag']):
             tag = tags[-4:]
@@ -510,7 +510,7 @@ class ESENT_PAGE:
                 pageFlags = (unpack('<H', tag[2:])[0] & 0xe000) >> 13
                 valueOffset = unpack('<H',tag[2:])[0] & 0x1fff
                 
-            print "TAG %-8d offset:0x%-6x flags:0x%-4x valueSize:0x%x" % (i,valueOffset,pageFlags,valueSize)
+            print("TAG %-8d offset:0x%-6x flags:0x%-4x valueSize:0x%x" % (i,valueOffset,pageFlags,valueSize))
             #hexdump(self.getTag(i)[1])
             tags = tags[:-4]
 
@@ -553,8 +553,7 @@ class ESENT_PAGE:
                     #indexEntry.dump()
                 elif self.record['PageFlags'] & FLAGS_LONG_VALUE > 0:
                     # Long Page Value
-                    LOG.error('Long value still not supported')
-                    raise
+                    raise Exception('Long value still not supported')
                 else:
                     # Table Value
                     leafEntry = ESENT_LEAF_ENTRY(flags, data)
@@ -566,8 +565,7 @@ class ESENT_PAGE:
 
     def getTag(self, tagNum):
         if self.record['FirstAvailablePageTag'] < tagNum:
-            LOG.error('Trying to grab an unknown tag 0x%x' % tagNum)
-            raise
+            raise Exception('Trying to grab an unknown tag 0x%x' % tagNum)
 
         tags = self.data[-4*self.record['FirstAvailablePageTag']:]
         baseOffset = len(self.record)
@@ -581,7 +579,7 @@ class ESENT_PAGE:
             valueOffset = unpack('<H',tag[2:])[0] & 0x7fff
             tmpData = list(self.data[baseOffset+valueOffset:][:valueSize])
             pageFlags = ord(tmpData[1]) >> 5
-            tmpData[1] = chr(ord(tmpData[1]) & 0x1f)
+            tmpData[1] = chr(ord(tmpData[1:2]) & 0x1f)
             tagData = "".join(tmpData)
         else:
             valueSize = unpack('<H', tag[:2])[0] & 0x1fff
@@ -615,7 +613,7 @@ class ESENT_DB:
         self.__DBHeader = ESENT_DB_HEADER(mainHeader)
         self.__pageSize = self.__DBHeader['PageSize']
         self.__DB.seek(0,2)
-        self.__totalPages = (self.__DB.tell() / self.__pageSize) -2
+        self.__totalPages = (self.__DB.tell() // self.__pageSize) -2
         LOG.debug("Database Version:0x%x, Revision:0x%x"% (self.__DBHeader['Version'], self.__DBHeader['FileFormatRevision']))
         LOG.debug("Page Size: %d" % self.__pageSize)
         LOG.debug("Total Pages in file: %d" % self.__totalPages)
@@ -624,21 +622,21 @@ class ESENT_DB:
     def printCatalog(self):
         indent = '    '
 
-        print "Database version: 0x%x, 0x%x" % (self.__DBHeader['Version'], self.__DBHeader['FileFormatRevision'] )
-        print "Page size: %d " % self.__pageSize
-        print "Number of pages: %d" % self.__totalPages
-        print 
-        print "Catalog for %s" % self.__fileName
-        for table in self.__tables.keys():
-            print "[%s]" % table
-            print "%sColumns " % indent
-            for column in self.__tables[table]['Columns'].keys():
+        print("Database version: 0x%x, 0x%x" % (self.__DBHeader['Version'], self.__DBHeader['FileFormatRevision'] ))
+        print("Page size: %d " % self.__pageSize)
+        print("Number of pages: %d" % self.__totalPages)
+        print() 
+        print("Catalog for %s" % self.__fileName)
+        for table in list(self.__tables.keys()):
+            print("[%s]" % table.decode('utf8'))
+            print("%sColumns " % indent)
+            for column in list(self.__tables[table]['Columns'].keys()):
                 record = self.__tables[table]['Columns'][column]['Record']
-                print "%s%-5d%-30s%s" % (indent*2, record['Identifier'], column,ColumnTypeToName[record['ColumnType']])
-            print "%sIndexes"% indent
-            for index in self.__tables[table]['Indexes'].keys():
-                print "%s%s" % (indent*2, index)
-            print ""
+                print("%s%-5d%-30s%s" % (indent*2, record['Identifier'], column.decode('utf-8'),ColumnTypeToName[record['ColumnType']]))
+            print("%sIndexes"% indent)
+            for index in list(self.__tables[table]['Indexes'].keys()):
+                print("%s%s" % (indent*2, index.decode('utf-8')))
+            print("")
 
     def __addItem(self, entry):
         dataDefinitionHeader = ESENT_DATA_DEFINITION_HEADER(entry['EntryData'])
@@ -661,8 +659,7 @@ class ESENT_DB:
         elif catalogEntry['Type'] == CATALOG_TYPE_LONG_VALUE:
             self.__addLongValue(entry)
         else:
-            LOG.error('Unknown type 0x%x' % catalogEntry['Type'])
-            raise
+            raise Exception('Unknown type 0x%x' % catalogEntry['Type'])
 
     def __parseItemName(self,entry):
         dataDefinitionHeader = ESENT_DATA_DEFINITION_HEADER(entry['EntryData'])
@@ -678,14 +675,11 @@ class ESENT_DB:
 
     def __addLongValue(self, entry):
         dataDefinitionHeader = ESENT_DATA_DEFINITION_HEADER(entry['EntryData'])
-        catalogEntry = ESENT_CATALOG_DATA_DEFINITION_ENTRY(entry['EntryData'][len(dataDefinitionHeader):])
         lvLen = unpack('<H',entry['EntryData'][dataDefinitionHeader['VariableSizeOffset']:][:2])[0]
         lvName = entry['EntryData'][dataDefinitionHeader['VariableSizeOffset']:][7:][:lvLen]
         self.__tables[self.__currentTable]['LongValues'][lvName] = entry
 
     def parsePage(self, page):
-        baseOffset = len(page.record)
-
         # Print the leaf/branch tags
         for tagNum in range(1,page.record['FirstAvailablePageTag']):
             flags, data = page.getTag(tagNum)
@@ -736,7 +730,10 @@ class ESENT_DB:
 
     def openTable(self, tableName):
         # Returns a cursos for later use
-        
+
+        if isinstance(tableName, bytes) is not True:
+            tableName = b(tableName)
+
         if tableName in self.__tables:
             entry = self.__tables[tableName]['TableEntry']
             dataDefinitionHeader = ESENT_DATA_DEFINITION_HEADER(entry['EntryData'])
@@ -747,7 +744,7 @@ class ESENT_DB:
             done = False
             while done is False:
                 page = self.getPage(pageNum)
-                if page.record['FirstAvailablePageTag'] == 1:
+                if page.record['FirstAvailablePageTag'] <= 1:
                     # There are no records
                     done = True
                 for i in range(1, page.record['FirstAvailablePageTag']):
@@ -781,11 +778,11 @@ class ESENT_DB:
         if page.record['PageFlags'] & FLAGS_LEAF > 0:
             # Leaf page
             if page.record['PageFlags'] & FLAGS_SPACE_TREE > 0:
-                raise
+                raise Exception('FLAGS_SPACE_TREE > 0')
             elif page.record['PageFlags'] & FLAGS_INDEX > 0:
-                raise
+                raise Exception('FLAGS_INDEX > 0')
             elif page.record['PageFlags'] & FLAGS_LONG_VALUE > 0:
-                raise
+                raise Exception('FLAGS_LONG_VALUE > 0')
             else:
                 # Table Value
                 leafEntry = ESENT_LEAF_ENTRY(flags, data)
@@ -812,9 +809,6 @@ class ESENT_DB:
         else:
             return self.__tagToRecord(cursor, tag['EntryData'])
 
-        # We never should get here
-        raise
-
     def __tagToRecord(self, cursor, tag):
         # So my brain doesn't forget, the data record is composed of:
         # Header
@@ -828,7 +822,7 @@ class ESENT_DB:
         #                VariableSizeOffset + numEntries * 2 (bytes)
         # Tagged Data ( > 255 )
         #     After the Variable Size Value, there's more data for the tagged values.
-        #     Right at the beggining there's another array (taggedItems), pointing to the
+        #     Right at the beginning there's another array (taggedItems), pointing to the
         #     values, size.
         #
         # The interesting thing about this DB records is there's no need for all the columns to be there, hence
@@ -854,7 +848,7 @@ class ESENT_DB:
  
         columns = cursor['TableData']['Columns'] 
         
-        for column in columns.keys():
+        for column in list(columns.keys()):
             columnRecord = columns[column]['Record']
             #columnRecord.dump()
             if columnRecord['Identifier'] <= dataDefinitionHeader['LastFixedSize']:
@@ -908,17 +902,17 @@ class ESENT_DB:
                 
                     # Calculate length of variable items
                     # Ugly.. should be redone
-                    prevKey = taggedItems.keys()[0]
+                    prevKey = list(taggedItems.keys())[0]
                     for i in range(1,len(taggedItems)):
                         offset0, length, flags = taggedItems[prevKey]
-                        offset, _, _ = taggedItems.items()[i][1]
+                        offset, _, _ = list(taggedItems.items())[i][1]
                         taggedItems[prevKey] = (offset0, offset-offset0, flags)
                         #print "ID: %d, Offset: %d, Len: %d, flags: %d" % (prevKey, offset0, offset-offset0, flags)
-                        prevKey = taggedItems.keys()[i]
+                        prevKey = list(taggedItems.keys())[i]
                     taggedItemsParsed = True
  
                 # Tagged data type
-                if taggedItems.has_key(columnRecord['Identifier']):
+                if columnRecord['Identifier'] in taggedItems:
                     offsetItem = variableDataBytesProcessed + variableSizeOffset + taggedItems[columnRecord['Identifier']][0] 
                     itemSize = taggedItems[columnRecord['Identifier']][1]
                     # If item have flags, we should skip them
@@ -954,12 +948,16 @@ class ESENT_DB:
                 # Let's handle strings
                 if record[column] is not None:
                     if columnRecord['CodePage'] not in StringCodePages:
-                        LOG.error('Unknown codepage 0x%x'% columnRecord['CodePage'])
-                        raise
+                        raise Exception('Unknown codepage 0x%x'% columnRecord['CodePage'])
                     stringDecoder = StringCodePages[columnRecord['CodePage']]
 
-                    record[column] = record[column].decode(stringDecoder)
-                
+                    try:
+                        record[column] = record[column].decode(stringDecoder)
+                    except Exception:
+                        LOG.debug("Exception:", exc_info=True)
+                        LOG.debug('Fixing Record[%r][%d]: %r' % (column, columnRecord['ColumnType'], record[column]))
+                        record[column] = record[column].decode(stringDecoder, "replace")
+                        pass
             else:
                 unpackData = ColumnTypeSize[columnRecord['ColumnType']]
                 if record[column] is not None:
@@ -967,9 +965,6 @@ class ESENT_DB:
                         record[column] = hexlify(record[column])
                     else:
                         unpackStr = unpackData[1]
-                        unpackSize = unpackData[0]
                         record[column] = unpack(unpackStr, record[column])[0]
 
         return record
-
-

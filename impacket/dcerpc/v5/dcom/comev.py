@@ -1,4 +1,4 @@
-# Copyright (c) 2003-2016 CORE Security Technologies
+# SECUREAUTH LABS. Copyright 2018 SecureAuth Corporation. All rights reserved.
 #
 # This software is provided under under a slightly modified version
 # of the Apache Software License. See the accompanying LICENSE file
@@ -13,12 +13,14 @@
 #
 #   Best way to learn how to use these calls is to grab the protocol standard
 #   so you understand what the call does, and then read the test case located
-#   at https://github.com/CoreSecurity/impacket/tree/master/impacket/testcases/SMB_RPC
+#   at https://github.com/SecureAuthCorp/impacket/tree/master/tests/SMB_RPC
 #
 #   Since DCOM is like an OO RPC, instead of helper functions you will see the 
 #   classes described in the standards developed. 
 #   There are test cases for them too. 
 #
+from __future__ import division
+from __future__ import print_function
 from impacket.dcerpc.v5.ndr import NDRSTRUCT, NDRENUM, NDRUniConformantVaryingArray
 from impacket.dcerpc.v5.dcomrt import DCOMCALL, DCOMANSWER, INTERFACE, PMInterfacePointer, IRemUnknown
 from impacket.dcerpc.v5.dcom.oaut import IDispatch, BSTR, VARIANT
@@ -33,7 +35,7 @@ class DCERPCSessionError(DCERPCException):
         DCERPCException.__init__(self, error_string, error_code, packet)
 
     def __str__( self ):
-        if hresult_errors.ERROR_MESSAGES.has_key(self.error_code):
+        if self.error_code in hresult_errors.ERROR_MESSAGES:
             error_msg_short = hresult_errors.ERROR_MESSAGES[self.error_code][0]
             error_msg_verbose = hresult_errors.ERROR_MESSAGES[self.error_code][1] 
             return 'COMEV SessionError: code: 0x%x - %s - %s' % (self.error_code, error_msg_short, error_msg_verbose)
@@ -102,7 +104,6 @@ class VARENUM(NDRENUM):
         VT_UINT_PTR    = 0x26
         VT_ARRAY       = 0x2000
         VT_BYREF       = 0x4000
-        VT_UINT_PTR     = 7
 
 ################################################################################
 # STRUCTURES
@@ -1860,4 +1861,3 @@ class IEventSystemInitialize(IRemUnknown):
         request['bRetainSubKeys'] = bRetainSubKeys
         resp = self.request(request, iid = self._iid, uuid = self.get_iPid())
         return resp
-

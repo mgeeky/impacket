@@ -1,4 +1,4 @@
-# Copyright (c) 2003-2016 CORE Security Technologies
+# SECUREAUTH LABS. Copyright 2018 SecureAuth Corporation. All rights reserved.
 #
 # This software is provided under under a slightly modified version
 # of the Apache Software License. See the accompanying LICENSE file
@@ -13,32 +13,36 @@
 #
 #   Best way to learn how to use these calls is to grab the protocol standard
 #   so you understand what the call does, and then read the test case located
-#   at https://github.com/CoreSecurity/impacket/tree/master/impacket/testcases/SMB_RPC
+#   at https://github.com/SecureAuthCorp/impacket/tree/master/tests/SMB_RPC
 #
 #   Since DCOM is like an OO RPC, instead of helper functions you will see the 
 #   classes described in the standards developed. 
 #   There are test cases for them too. 
 #
+from __future__ import division
+from __future__ import print_function
 import random
-from impacket.dcerpc.v5.ndr import NDRSTRUCT, NDRUniConformantArray, NDRPOINTER, NDRENUM, NDRUSHORT, NDRUNION, \
-    NDRUniConformantVaryingArray
+from struct import pack, unpack
+
+from impacket import LOG
+from impacket import hresult_errors
 from impacket.dcerpc.v5.dcomrt import DCOMCALL, DCOMANSWER, IRemUnknown2, PMInterfacePointer, INTERFACE, \
-    MInterfacePointer, MInterfacePointer_ARRAY, BYTE_ARRAY
+    MInterfacePointer, MInterfacePointer_ARRAY, BYTE_ARRAY, PPMInterfacePointer
 from impacket.dcerpc.v5.dtypes import LPWSTR, ULONG, DWORD, SHORT, GUID, USHORT, LONG, WSTR, BYTE, LONGLONG, FLOAT, \
     DOUBLE, HRESULT, PSHORT, PLONG, PLONGLONG, PFLOAT, PDOUBLE, PHRESULT, CHAR, ULONGLONG, INT, UINT, PCHAR, PUSHORT, \
     PULONG, PULONGLONG, PINT, PUINT, NULL
 from impacket.dcerpc.v5.enum import Enum
+from impacket.dcerpc.v5.ndr import NDRSTRUCT, NDRUniConformantArray, NDRPOINTER, NDRENUM, NDRUSHORT, NDRUNION, \
+    NDRUniConformantVaryingArray, NDR
 from impacket.dcerpc.v5.rpcrt import DCERPCException
-from impacket import hresult_errors
 from impacket.uuid import string_to_bin
-from struct import pack, unpack
 
 class DCERPCSessionError(DCERPCException):
     def __init__(self, error_string=None, error_code=None, packet=None):
         DCERPCException.__init__(self, error_string, error_code, packet)
 
     def __str__( self ):
-        if hresult_errors.ERROR_MESSAGES.has_key(self.error_code):
+        if self.error_code in hresult_errors.ERROR_MESSAGES:
             error_msg_short = hresult_errors.ERROR_MESSAGES[self.error_code][0]
             error_msg_verbose = hresult_errors.ERROR_MESSAGES[self.error_code][1] 
             return 'OAUT SessionError: code: 0x%x - %s - %s' % (self.error_code, error_msg_short, error_msg_verbose)
@@ -151,7 +155,6 @@ class VARENUM(NDRENUM):
         VT_UINT_PTR    = 0x26
         VT_ARRAY       = 0x2000
         VT_BYREF       = 0x4000
-        VT_UINT_PTR    = 7
         VT_RECORD_OR_VT_BYREF   = VT_RECORD | VT_BYREF
         VT_UI1_OR_VT_BYREF      = VT_UI1 | VT_BYREF
         VT_I2_OR_VT_BYREF       = VT_I2 | VT_BYREF
@@ -284,9 +287,9 @@ class FLAGGED_WORD_BLOB(NDRSTRUCT):
         if msg is None: msg = self.__class__.__name__
         ind = ' '*indent
         if msg != '':
-            print "%s" % (msg)
+            print("%s" % (msg))
         value = ''
-        print '%sasData: %s' % (ind,self['asData']),
+        print('%sasData: %s' % (ind,self['asData']), end=' ')
 
 # 2.2.23.2 BSTR Type Definition
 class BSTR(NDRPOINTER):
@@ -433,8 +436,13 @@ class VARIANT_ARRAY(NDRUniConformantArray):
     # I declare the item in the constructor
     #item = VARIANT
     def __init__(self, data = None, isNDR64 = False):
-        NDRUniConformantArray(self, data, isNDR64)
+        NDRUniConformantArray.__init__(self, data, isNDR64)
         self.item = VARIANT
+
+class PVARIANT_ARRAY(NDRPOINTER):
+    referent = (
+        ('Data', VARIANT_ARRAY),
+    )
 
 class PVARIANT(NDRPOINTER):
     # In order to avoid the lack of forward declarations in Python
@@ -443,7 +451,7 @@ class PVARIANT(NDRPOINTER):
     #    ('Data', VARIANT),
     #)
     def __init__(self, data = None, isNDR64 = False):
-        NDRPOINTER(self, data, isNDR64)
+        NDRPOINTER.__init__(self, data, isNDR64)
         self.referent = ( ('Data', VARIANT),)
 
 
@@ -497,6 +505,11 @@ class PSAFEARRAY(NDRPOINTER):
 
 # 2.2.29 VARIANT
 # 2.2.29.1 _wireVARIANT
+class EMPTY(NDR):
+    align = 0
+    structure = (
+    )
+
 class varUnion(NDRUNION):
     commonHdr = (
         ('tag', ULONG),
@@ -513,8 +526,8 @@ class varUnion(NDRUNION):
         VARENUM.VT_CY                  : ('cyVal', CURRENCY),
         VARENUM.VT_DATE                : ('date', DATE),
         VARENUM.VT_BSTR                : ('bstrVal', BSTR),
-        VARENUM.VT_UNKNOWN             : ('punkVal', MInterfacePointer),
-        VARENUM.VT_DISPATCH            : ('pdispVal', MInterfacePointer),
+        VARENUM.VT_UNKNOWN             : ('punkVal', PMInterfacePointer),
+        VARENUM.VT_DISPATCH            : ('pdispVal', PMInterfacePointer),
         VARENUM.VT_ARRAY               : ('parray', SAFEARRAY),
         VARENUM.VT_RECORD              : ('brecVal', BRECORD),
         VARENUM.VT_RECORD_OR_VT_BYREF  : ('brecVal', BRECORD),
@@ -529,8 +542,8 @@ class varUnion(NDRUNION):
         VARENUM.VT_CY_OR_VT_BYREF      : ('pcyVal', PCURRENCY),
         VARENUM.VT_DATE_OR_VT_BYREF    : ('pdate', PDATE),
         VARENUM.VT_BSTR_OR_VT_BYREF    : ('pbstrVal', PBSTR),
-        VARENUM.VT_UNKNOWN_OR_VT_BYREF : ('ppunkVal', PMInterfacePointer),
-        VARENUM.VT_DISPATCH_OR_VT_BYREF: ('ppdispVal', PMInterfacePointer),
+        VARENUM.VT_UNKNOWN_OR_VT_BYREF : ('ppunkVal', PPMInterfacePointer),
+        VARENUM.VT_DISPATCH_OR_VT_BYREF: ('ppdispVal', PPMInterfacePointer),
         VARENUM.VT_ARRAY_OR_VT_BYREF   : ('pparray', PSAFEARRAY),
         VARENUM.VT_VARIANT_OR_VT_BYREF : ('pvarVal', PVARIANT),
         VARENUM.VT_I1                  : ('cVal', CHAR),
@@ -547,8 +560,8 @@ class varUnion(NDRUNION):
         VARENUM.VT_INT_OR_VT_BYREF     : ('pintVal', PINT),
         VARENUM.VT_UINT_OR_VT_BYREF    : ('puintVal', PUINT),
         VARENUM.VT_DECIMAL_OR_VT_BYREF : ('pdecVal', PDECIMAL),
-        VARENUM.VT_EMPTY               : ('', ),
-        VARENUM.VT_NULL                : ('', ),
+        VARENUM.VT_EMPTY               : ('empty', EMPTY),
+        VARENUM.VT_NULL                : ('null', EMPTY),
     }
 
 class wireVARIANTStr(NDRSTRUCT):
@@ -561,6 +574,9 @@ class wireVARIANTStr(NDRSTRUCT):
         ('wReserved3',USHORT),
         ('_varUnion',varUnion),
     )
+
+    def getAlignment(self):
+        return 8
 
 class VARIANT(NDRPOINTER):
     referent = (
@@ -579,10 +595,15 @@ DISPID = LONG
 class DISPID_ARRAY(NDRUniConformantArray):
     item = '<L'
 
+class PDISPID_ARRAY(NDRPOINTER):
+    referent = (
+        ('Data', DISPID_ARRAY),
+    )
+
 class DISPPARAMS(NDRSTRUCT):
     structure = (
-        ('rgvarg',VARIANT_ARRAY),
-        ('rgdispidNamedArgs', DISPID_ARRAY),
+        ('rgvarg',PVARIANT_ARRAY),
+        ('rgdispidNamedArgs', PDISPID_ARRAY),
         ('cArgs', UINT),
         ('cNamedArgs', UINT),
     )
@@ -614,7 +635,7 @@ class ARRAYDESC(NDRSTRUCT):
     #    ('rgbounds',SAFEARRAYBOUND_ARRAY),
     #)
     def __init__(self, data = None, isNDR64 = False):
-        NDRSTRUCT(self, data, isNDR64)
+        NDRSTRUCT.__init__(self, data, isNDR64)
         self.structure = (
             ('tdescElem',TYPEDESC),
             ('cDims',USHORT),
@@ -921,6 +942,57 @@ OPNUMS = {
 ################################################################################
 # HELPER FUNCTIONS AND INTERFACES
 ################################################################################
+# 4.8.5 Enumerating All Methods in an Interface
+# INPUT: IDispatch pointer from the automation server
+# CALL IDispatch::GetTypeInfoCount and OBTAIN pcTInfo
+# COMMENT see Section 3.1.4.1 for information on pcTInfo i
+# IF pcTInfo = 0 THEN
+#     PRINT Automation Server does not support type information for this object
+# ELSE
+#     CALL IDispatch::GetTypeInfo with correct LocaleID and OBTAIN ITypeInfo pointer
+#     CALL ITypeInfo::GetDocumentation(MEMBERID_NIL, 1, &BstrName, NULL, NULL, NULL)
+#     PRINT Name of the Interface is BstrName
+#     CALL ITypeInfo::GetTypeAttr and OBTAIN TYPEATTR pointer
+#
+#     FOR X = 0 to TYPEATTR:: cFuncs -1
+#         CALL ITypeInfo::GetFuncDesc with X and OBTAIN FUNCDESC pointer
+#         CALL ITypeInfo::GetNames with FUNCDESC::memid and appropriate values for
+#             rgBstrNames, cMaxNames and pcNames
+#         COMMENT see Section 3.7.4.5 for more information regarding the parameters
+#                 to ITypeinfo::GetNames
+#         IF pcNames > 0 THEN
+#             PRINT Name of the method is rgBstrNames[0]
+#             PRINT Parameters to above method are following
+#             FOR Y = 1 to pcNames -1
+#                 PRINT rgBstrNames[Y]
+#             END FOR
+#         END IF
+#     END FOR i
+# ENDIF
+def enumerateMethods(iInterface):
+    methods = dict()
+    typeInfoCount = iInterface.GetTypeInfoCount()
+    if typeInfoCount['pctinfo'] == 0:
+        LOG.error('Automation Server does not support type information for this object')
+        return {}
+    iTypeInfo = iInterface.GetTypeInfo()
+    iTypeAttr = iTypeInfo.GetTypeAttr()
+    for x in range(iTypeAttr['ppTypeAttr']['cFuncs']):
+        funcDesc = iTypeInfo.GetFuncDesc(x)
+        names = iTypeInfo.GetNames(funcDesc['ppFuncDesc']['memid'], 255)
+        print(names['rgBstrNames'][0]['asData'])
+        funcDesc.dump()
+        print('='*80)
+        if names['pcNames'] > 0:
+            name = names['rgBstrNames'][0]['asData']
+            methods[name] = {}
+            for param in range(1, names['pcNames']):
+                methods[name][names['rgBstrNames'][param]['asData']] = ''
+        if funcDesc['ppFuncDesc']['elemdescFunc'] != NULL:
+            methods[name]['ret'] = funcDesc['ppFuncDesc']['elemdescFunc']['tdesc']['vt']
+
+    return methods
+
 def checkNullString(string):
     if string == NULL:
         return string
@@ -1009,12 +1081,10 @@ class IDispatch(IRemUnknown2):
         request['dispIdMember'] = dispIdMember
         request['riid'] = IID_NULL
         request['lcid'] = lcid
-        request['dwFlags'] = dwFlags 
+        request['dwFlags'] = dwFlags
         request['pDispParams'] = pDispParams
         request['cVarRef'] = cVarRef
         request['rgVarRefIdx'] = rgVarRefIdx
         request['rgVarRef'] = rgVarRefIdx
         resp = self.request(request, iid = self._iid, uuid = self.get_iPid())
         return resp
-
-

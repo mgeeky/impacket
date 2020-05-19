@@ -1,4 +1,4 @@
-# Copyright (c) 2003-2016 CORE Security Technologies
+# SECUREAUTH LABS. Copyright 2018 SecureAuth Corporation. All rights reserved.
 #
 # This software is provided under under a slightly modified version
 # of the Apache Software License. See the accompanying LICENSE file
@@ -9,7 +9,7 @@ import array
 import struct
 
 from impacket import ImpactPacket
-from ICMP6 import ICMP6
+from impacket.ICMP6 import ICMP6
 
 
 class NDP(ICMP6):
@@ -163,4 +163,3 @@ class NDP_Option():
         ndp_option.set_data(data_bytes)
         
         return ndp_option
-    

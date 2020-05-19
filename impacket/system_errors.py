@@ -1,4 +1,4 @@
-# Copyright (c) 2003-2016 CORE Security Technologies
+# SECUREAUTH LABS. Copyright 2018 SecureAuth Corporation. All rights reserved.
 #
 # This software is provided under under a slightly modified version
 # of the Apache Software License. See the accompanying LICENSE file
@@ -1639,7 +1639,7 @@ ERROR_MESSAGES = {
         0x00001abd: ("ERROR_TM_IDENTITY_MISMATCH", "The call to create a TransactionManager object failed because the Tm Identity stored in the logfile does not match the Tm Identity that was passed in as an argument."),
         0x00001abe: ("ERROR_FLOATED_SECTION", "I/O was attempted on a section object that has been floated as a result of a transaction ending. There is no valid data."),
         0x00001abf: ("ERROR_CANNOT_ACCEPT_TRANSACTED_WORK", "The transactional resource manager cannot currently accept transacted work due to a transient condition such as low resources."),
-        0x00001ac0: ("ERROR_CANNOT_ABORT_TRANSACTIONS", "The transactional resource manager had too many tranactions outstanding that could not be aborted. The transactional resource manger has been shut down."),
+        0x00001ac0: ("ERROR_CANNOT_ABORT_TRANSACTIONS", "The transactional resource manager had too many transactions outstanding that could not be aborted. The transactional resource manager has been shut down."),
         0x00001ac1: ("ERROR_BAD_CLUSTERS", "The operation could not be completed due to bad clusters on disk."),
         0x00001ac2: ("ERROR_COMPRESSION_NOT_ALLOWED_IN_TRANSACTION", "The compression operation could not be completed because a transaction is active on the file."),
         0x00001ac3: ("ERROR_VOLUME_DIRTY", "The operation could not be completed because the volume is dirty. Please run chkdsk and try again."),
@@ -1777,7 +1777,7 @@ ERROR_MESSAGES = {
         0x00002044: ("ERROR_DS_REFERRAL_LIMIT_EXCEEDED", "The preset referral limit was exceeded."),
         0x00002045: ("ERROR_DS_SORT_CONTROL_MISSING", "The search requires a SORT control."),
         0x00002046: ("ERROR_DS_OFFSET_RANGE_ERROR", "The search results exceed the offset range specified."),
-        0x00002047: ("ERROR_DS_RIDMGR_DISABLED", "The directory service detected the subsystem that allocates relative identifiers is disabled. This can occur as a protective mechanism when the system determines a significant portion of relative identifiers (RIDs) have been exhausted. Please see http://go.microsoft.com/fwlink/?LinkId=228610 for recommended diagnostic steps and the procedure to re-enable account creation."),
+        0x00002047: ("ERROR_DS_RIDMGR_DISABLED", "The directory service detected the subsystem that allocates relative identifiers is disabled. This can occur as a protective mechanism when the system determines a significant portion of relative identifiers (RIDs) have been exhausted. Please see https://go.microsoft.com/fwlink/?LinkId=228610 for recommended diagnostic steps and the procedure to re-enable account creation."),
         0x0000206d: ("ERROR_DS_ROOT_MUST_BE_NC", "The root object must be the head of a naming context. The root object cannot have an instantiated parent."),
         0x0000206e: ("ERROR_DS_ADD_REPLICA_INHIBITED", "The add replica operation cannot be performed. The naming context must be writeable in order to create the replica."),
         0x0000206f: ("ERROR_DS_ATT_NOT_DEF_IN_SCHEMA", "A reference to an attribute that is not defined in the schema occurred."),
@@ -2120,7 +2120,7 @@ ERROR_MESSAGES = {
         0x000021c1: ("ERROR_DS_HIGH_ADLDS_FFL", "The functional level of the AD LDS configuration set cannot be lowered to the requested value."),
         0x000021c2: ("ERROR_DS_HIGH_DSA_VERSION", "The functional level of the domain (or forest) cannot be lowered to the requested value."),
         0x000021c3: ("ERROR_DS_LOW_ADLDS_FFL", "The functional level of the AD LDS configuration set cannot be raised to the requested value, because there exist one or more ADLDS instances that are at a lower incompatible functional level."),
-        0x000021c4: ("ERROR_DOMAIN_SID_SAME_AS_LOCAL_WORKSTATION", "The domain join cannot be completed because the SID of the domain you attempted to join was identical to the SID of this machine. This is a symptom of an improperly cloned operating system install.  You should run sysprep on this machine in order to generate a new machine SID. Please see http://go.microsoft.com/fwlink/?LinkId=168895 for more information."),
+        0x000021c4: ("ERROR_DOMAIN_SID_SAME_AS_LOCAL_WORKSTATION", "The domain join cannot be completed because the SID of the domain you attempted to join was identical to the SID of this machine. This is a symptom of an improperly cloned operating system install.  You should run sysprep on this machine in order to generate a new machine SID. Please see https://go.microsoft.com/fwlink/?LinkId=168895 for more information."),
         0x000021c5: ("ERROR_DS_UNDELETE_SAM_VALIDATION_FAILED", "The undelete operation failed because the Sam Account Name or Additional Sam Account Name of the object being undeleted conflicts with an existing live object."),
         0x000021c6: ("ERROR_INCORRECT_ACCOUNT_TYPE", "The system is not authoritative for the specified account and therefore cannot complete the operation. Please retry the operation using the provider associated with this account. If this is an online provider please use the provider's online site."),
         0x00002329: ("DNS_ERROR_RCODE_FORMAT_ERROR", "DNS server unable to interpret format."),
@@ -2626,7 +2626,7 @@ ERROR_MESSAGES = {
         0x00003aa6: ("ERROR_EVT_FILTER_ALREADYSCOPED", "An expression can only be followed by a change of scope operation if it itself evaluates to a node set and is not already part of some other change of scope operation."),
         0x00003aa7: ("ERROR_EVT_FILTER_NOTELTSET", "Can't perform a step operation from a term that does not represent an element set."),
         0x00003aa8: ("ERROR_EVT_FILTER_INVARG", "Left hand side arguments to binary operators must be either attributes, nodes or variables and right hand side arguments must be constants."),
-        0x00003aa9: ("ERROR_EVT_FILTER_INVTEST", "A step operation must involve either a node test or, in the case of a predicate, an algebraic expression against which to test each node in the node set identified by the preceeding node set can be evaluated."),
+        0x00003aa9: ("ERROR_EVT_FILTER_INVTEST", "A step operation must involve either a node test or, in the case of a predicate, an algebraic expression against which to test each node in the node set identified by the preceding node set can be evaluated."),
         0x00003aaa: ("ERROR_EVT_FILTER_INVTYPE", "This data type is currently unsupported."),
         0x00003aab: ("ERROR_EVT_FILTER_PARSEERR", "A syntax error occurred at position %1!d!"),
         0x00003aac: ("ERROR_EVT_FILTER_UNSUPPORTEDOP", "This operator is unsupported by this implementation of the filter."),
@@ -2646,7 +2646,7 @@ ERROR_MESSAGES = {
         0x00003aba: ("ERROR_EVT_VERSION_TOO_OLD", "The resource is too old to be compatible."),
         0x00003abb: ("ERROR_EVT_VERSION_TOO_NEW", "The resource is too new to be compatible."),
         0x00003abc: ("ERROR_EVT_CANNOT_OPEN_CHANNEL_OF_QUERY", "The channel at index %1!d! of the query can't be opened."),
-        0x00003abd: ("ERROR_EVT_PUBLISHER_DISABLED", "The publisher has been disabled and its resource is not avaiable. This usually occurs when the publisher is in the process of being uninstalled or upgraded."),
+        0x00003abd: ("ERROR_EVT_PUBLISHER_DISABLED", "The publisher has been disabled and its resource is not available. This usually occurs when the publisher is in the process of being uninstalled or upgraded."),
         0x00003abe: ("ERROR_EVT_FILTER_OUT_OF_RANGE", "Attempted to create a numeric type that is outside of its valid range."),
         0x00003ae8: ("ERROR_EC_SUBSCRIPTION_CANNOT_ACTIVATE", "The subscription fails to activate."),
         0x00003ae9: ("ERROR_EC_LOG_DISABLED", "The log of the subscription is in disabled state, and can not be used to forward events to. The log must first be enabled before the subscription can be activated."),
@@ -2700,7 +2700,7 @@ ERROR_MESSAGES = {
         0x00003bda: ("ERROR_GPIO_CLIENT_INFORMATION_INVALID", "The information supplied by the GPIO client driver is invalid."),
         0x00003bdb: ("ERROR_GPIO_VERSION_NOT_SUPPORTED", "The version specified by the GPIO client driver is not supported."),
         0x00003bdc: ("ERROR_GPIO_INVALID_REGISTRATION_PACKET", "The registration packet supplied by the GPIO client driver is not valid."),
-        0x00003bdd: ("ERROR_GPIO_OPERATION_DENIED", "The requested operation is not suppported for the specified handle."),
+        0x00003bdd: ("ERROR_GPIO_OPERATION_DENIED", "The requested operation is not supported for the specified handle."),
         0x00003bde: ("ERROR_GPIO_INCOMPATIBLE_CONNECT_MODE", "The requested connect mode conflicts with an existing mode on one or more of the specified pins."),
         0x00003bdf: ("ERROR_GPIO_INTERRUPT_ALREADY_UNMASKED", "The interrupt requested to be unmasked is not masked."),
         0x00003c28: ("ERROR_CANNOT_SWITCH_RUNLEVEL", "The requested run level switch cannot be completed successfully."),

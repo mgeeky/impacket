@@ -1,4 +1,4 @@
-# Copyright (c) 2003-2016 CORE Security Technologies
+# SECUREAUTH LABS. Copyright 2018 SecureAuth Corporation. All rights reserved.
 #
 # This software is provided under under a slightly modified version
 # of the Apache Software License. See the accompanying LICENSE file
@@ -9,6 +9,8 @@
 # Description:
 #   SMB 2 and 3 Protocol Structures and constants [MS-SMB2]
 #
+from __future__ import division
+from __future__ import print_function
 
 from impacket.structure import Structure
 
@@ -55,6 +57,23 @@ SYMLINK_FLAG_RELATIVE         = 0x1
 SMB2_NEGOTIATE_SIGNING_ENABLED  = 0x1
 SMB2_NEGOTIATE_SIGNING_REQUIRED = 0x2
 
+# SMB2_NEGOTIATE_CONTEXT
+SMB2_PREAUTH_INTEGRITY_CAPABILITIES = 0x1
+SMB2_ENCRYPTION_CAPABILITIES        = 0x2
+SMB2_COMPRESSION_CAPABILITIES       = 0x3
+SMB2_NETNAME_NEGOTIATE_CONTEXT_ID   = 0x5
+
+# SMB2_COMPRESSION_CAPABILITIES
+SMB2_COMPRESSION_CAPABILITIES_FLAG_NONE    = 0x0
+SMB2_COMPRESSION_CAPABILITIES_FLAG_CHAINED = 0x1
+
+# Compression Algorithms
+COMPRESSION_ALGORITHM_NONE         = 0x0
+COMPRESSION_ALGORITHM_LZNT1        = 0x1
+COMPRESSION_ALGORITHM_LZ77         = 0x2
+COMPRESSION_ALGORITHM_LZ77_HUFFMAN = 0x3
+COMPRESSION_ALGORITHM_PATTERN_V1   = 0x4
+
 # Capabilities
 SMB2_GLOBAL_CAP_DFS                = 0x01
 SMB2_GLOBAL_CAP_LEASING            = 0x02
@@ -68,6 +87,8 @@ SMB2_GLOBAL_CAP_ENCRYPTION         = 0x40
 SMB2_DIALECT_002      = 0x0202 
 SMB2_DIALECT_21       = 0x0210 
 SMB2_DIALECT_30       = 0x0300 
+SMB2_DIALECT_302      = 0x0302  #SMB 3.0.2
+SMB2_DIALECT_311      = 0x0311  #SMB 3.1.1
 SMB2_DIALECT_WILDCARD = 0x02FF 
 
 # SMB2_SESSION_SETUP
@@ -271,6 +292,7 @@ FSCTL_SRV_COPYCHUNK_WRITE            = 0x001480F2
 FSCTL_LMR_REQUEST_RESILIENCY         = 0x001401D4
 FSCTL_QUERY_NETWORK_INTERFACE_INFO   = 0x001401FC
 FSCTL_SET_REPARSE_POINT              = 0x000900A4
+FSCTL_DELETE_REPARSE_POINT           = 0x000900AC
 FSCTL_DFS_GET_REFERRALS_EX           = 0x000601B0
 FSCTL_FILE_LEVEL_TRIM                = 0x00098208
 FSCTL_VALIDATE_NEGOTIATE_INFO        = 0x00140204
@@ -344,6 +366,7 @@ SMB2_0_INFO_SECURITY    = 0x03
 SMB2_0_INFO_QUOTA       = 0x04
 
 # File Information Classes
+SMB2_SEC_INFO_00                      = 0
 SMB2_FILE_ACCESS_INFO                 = 8
 SMB2_FILE_ALIGNMENT_INFO              = 17
 SMB2_FILE_ALL_INFO                    = 18
@@ -415,6 +438,7 @@ SL_INDEX_SPECIFIED      = 0x00000004
 
 # TRANSFORM_HEADER
 SMB2_ENCRYPTION_AES128_CCM = 0x0001
+SMB2_ENCRYPTION_AES128_GCM = 0x0002
 
 
 # STRUCtures
@@ -422,11 +446,11 @@ SMB2_ENCRYPTION_AES128_CCM = 0x0001
 class SMBPacketBase(Structure):
     def addCommand(self,command):
         # Pad to 8 bytes and put the offset of another SMBPacket
-        raise 'Implement This!' 
+        raise Exception('Implement This!')
 
     def isValidAnswer(self, status):
         if self['Status'] != status:
-            import smb3
+            from . import smb3
             raise smb3.SessionError(self['Status'], self)
         return True
 
@@ -541,16 +565,26 @@ class SMB2Negotiate(Structure):
         ('Reserved','<H=0'),
         ('Capabilities','<L=0'),
         ('ClientGuid','16s=""'),
-        ('ClientStartTime','<Q=0'),
+        ('ClientStartTime','8s=""'),  # or (NegotiateContextOffset/NegotiateContextCount/Reserved2) in SMB 3.1.1
         ('Dialects','*<H'),
+        # SMB 3.1.1
+        ('Padding',':=""'),
+        ('NegotiateContextList',':=""'),
     )
 
+class SMB311ContextData(Structure):
+    structure = (
+        ('NegotiateContextOffset','<L=0'),
+        ('NegotiateContextCount','<H=0'),
+        ('Reserved2','<H=0'),
+    )
 class SMB2Negotiate_Response(Structure):
     structure = (
         ('StructureSize','<H=65'),
         ('SecurityMode','<H=0'),
         ('DialectRevision','<H=0'),
-        ('Reserved','<H=0'),
+        # SMB 3.1.1 only. Otherwise Reserved
+        ('NegotiateContextCount','<H=0'),
         ('ServerGuid','16s=""'),
         ('Capabilities','<L=0'),
         ('MaxTransactSize','<L=0'),
@@ -560,11 +594,58 @@ class SMB2Negotiate_Response(Structure):
         ('ServerStartTime','<Q=0'),
         ('SecurityBufferOffset','<H=0'),
         ('SecurityBufferLength','<H=0'),
-        ('Reserved2','<L=0'),
+        # SMB 3.1.1 only. Otherwise Reserved
+        ('NegotiateContextOffset','<L=0'),
         ('_AlignPad','_-AlignPad','self["SecurityBufferOffset"] - (64 + self["StructureSize"] - 1)'),
         ('AlignPad',':=""'),
         ('_Buffer','_-Buffer','self["SecurityBufferLength"]'),
         ('Buffer',':'),
+        ('_Padding','_-Padding', '0 if self["NegotiateContextOffset"] == 0 else (self["NegotiateContextOffset"] - '
+                                 'self["SecurityBufferOffset"] - self["SecurityBufferLength"])'),
+        ('Padding',':=""'),
+        ('_NegotiateContextList','_-NegotiateContextList', '0 if self["NegotiateContextOffset"] == 0 else '
+                                                           'len(self.rawData)-self["NegotiateContextOffset"]+64'),
+        ('NegotiateContextList',':=""'),
+    )
+
+# SMB2 NEGOTIATE_CONTEXT
+class SMB2NegotiateContext(Structure):
+    structure = (
+        ('ContextType','<H=0'),
+        ('DataLength','<H=0'),
+        ('Reserved','<L=0'),
+        ('Data',':=""'),
+    )
+
+# SMB2_PREAUTH_INTEGRITY_CAPABILITIES
+class SMB2PreAuthIntegrityCapabilities(Structure):
+    structure = (
+        ('HashAlgorithmCount','<H=0'),
+        ('SaltLength','<H=0'),
+        ('HashAlgorithms',':=""'),
+        ('Salt',':=""'),
+    )
+
+# SMB2_ENCRYPTION_CAPABILITIES
+class SMB2EncryptionCapabilities(Structure):
+    structure = (
+        ('CipherCount','<H=0'),
+        ('Ciphers','<H=0'),
+    )
+
+# SMB2_COMPRESSION_CAPABILITIES
+class SMB2CompressionCapabilities(Structure):
+    structure = (
+        ('CompressionAlgorithmCount','<H=0'),
+        ('Padding','<H=0'),
+        ('Flags','<L=0'),
+        ('CompressionAlgorithms',':=""'),
+    )
+
+# SMB2_NETNAME_NEGOTIATE_CONTEXT_ID
+class SMB2NetNameNegotiateContextID(Structure):
+    structure = (
+        ('NetName',':=""'),
     )
 
 # SMB2_SESSION_SETUP 
@@ -780,7 +861,7 @@ class SMB2_CREATE_ALLOCATION_SIZE(Structure):
 
 class SMB2_CREATE_TIMEWARP_TOKEN(Structure):
     structure = (
-        ('AllocationSize','<Q=0'),
+        ('Timestamp','<Q=0'),
     )
 
 class SMB2_CREATE_REQUEST_LEASE(Structure):
@@ -898,7 +979,7 @@ class SMB2Read(Structure):
         ('_AlignPad','_-AlignPad','self["ReadChannelInfoOffset"] - (64 + self["StructureSize"] - 1)'),
         ('AlignPad',':=""'),
         ('_Buffer','_-Buffer','self["ReadChannelInfoLength"]'),
-        ('Buffer',':=0'),
+        ('Buffer',':="0"'),
     )
     def __init__(self, data = None):
         Structure.__init__(self,data)
@@ -1118,6 +1199,14 @@ class VALIDATE_NEGOTIATE_INFO(Structure):
         ('Dialects','<H*<H'),
     )
 
+class VALIDATE_NEGOTIATE_INFO_RESPONSE(Structure):
+    structure = (
+        ('Capabilities','<L=0'),
+        ('Guid','16s=""'),
+        ('SecurityMode','<H=0'),
+        ('Dialect','<H'),
+    )
+
 class SRV_SNAPSHOT_ARRAY(Structure):
     structure = (
         ('NumberOfSnapShots','<L=0'),
@@ -1176,6 +1265,27 @@ class NETWORK_INTERFACE_INFO(Structure):
         ('Reserved','<L=0'),
         ('LinkSpeed','<Q=0'),
         ('SockAddr_Storage','128s=""'),
+    )
+
+class MOUNT_POINT_REPARSE_DATA_STRUCTURE(Structure):
+    structure = (
+        ("ReparseTag", "<L=0xA0000003"),
+        ("ReparseDataLen", "<H=len(self['PathBuffer']) + 8"),
+        ("Reserved", "<H=0"),
+        ("SubstituteNameOffset", "<H=0"),
+        ("SubstituteNameLength", "<H=0"),
+        ("PrintNameOffset", "<H=0"),
+        ("PrintNameLength", "<H=0"),
+        ("PathBuffer", ":")
+    )
+
+class MOUNT_POINT_REPARSE_GUID_DATA_STRUCTURE(Structure):
+    structure = (
+        ("ReparseTag", "<L=0xA0000003"),
+        ("ReparseDataLen", "<H=len(self['DataBuffer'])"),
+        ("Reserved", "<H=0"),
+        ("ReparseGuid", "16s=''"),
+        ("DataBuffer", ":")
     )
 
 class SMB2Ioctl_Response(Structure):
@@ -1356,8 +1466,43 @@ class SMB2_TRANSFORM_HEADER(Structure):
         ('SessionID','<Q=0'),
     )
 
+class SMB2_COMPRESSION_TRANSFORM_HEADER(Structure):
+    structure = (
+        ('ProtocolID','<L=0'),
+        ('OriginalCompressedSegmentSize','<L=0'),
+        ('CompressionAlgorithm','<H=0'),
+        ('Flags','<H=0'),
+        ('Offset_Length','<L=0'),
+    )
+
+class SMB2_COMPRESSION_PAYLOAD_HEADER(Structure):
+    structure = (
+        ('AlgorithmId','<H=0'),
+        ('Reserved','<H=0'),
+        ('Length','<L=0'),
+    )
+
+class SMB2_COMPRESSION_PATTERN_PAYLOAD_V1(Structure):
+    structure = (
+        ('Pattern','B=0'),
+        ('Reserved1','B=0'),
+        ('Reserved2','B=0'),
+        ('Repetitions','<L=0'),
+    )
+
 # SMB2_FILE_INTERNAL_INFO
 class FileInternalInformation(Structure):
     structure = (
         ('IndexNumber','<q=0'),
+    )
+
+# SMB2_SEC_INFO_00       
+class FileSecInformation(Structure):
+    structure = (
+        ('Revision','<h=1'),
+        ('Type','<h=0'),
+        ('OffsetToOwner','<I=0'),
+        ('OffsetToGroup','<I=0'),
+        ('OffsetToSACL','<I=0'),
+        ('OffsetToDACL','<I=0'),
     )

@@ -1,4 +1,4 @@
-# Copyright (c) 2003-2016 CORE Security Technologies
+# SECUREAUTH LABS. Copyright 2018 SecureAuth Corporation. All rights reserved.
 #
 # This software is provided under under a slightly modified version
 # of the Apache Software License. See the accompanying LICENSE file
@@ -23,7 +23,7 @@ class KeyManager:
 
     def add_key(self, bssid, key):
         bssid=self.__get_bssid_hasheable_type(bssid)
-        if not bssid in self.keys:
+        if bssid not in self.keys:
             self.keys[bssid] = key
             return True
         else:
@@ -37,7 +37,7 @@ class KeyManager:
         
     def get_key(self, bssid):
         bssid=self.__get_bssid_hasheable_type(bssid)
-        if self.keys.has_key(bssid):
+        if bssid in self.keys:
             return self.keys[bssid]
         else:
             return False
@@ -47,7 +47,7 @@ class KeyManager:
         if not isinstance(bssid, list):
             raise Exception('BSSID datatype must be a list')
         
-        if self.keys.has_key(bssid):
+        if bssid in self.keys:
             del self.keys[bssid] 
             return True
         

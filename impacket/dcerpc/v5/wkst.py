@@ -1,4 +1,4 @@
-# Copyright (c) 2003-2016 CORE Security Technologies
+# SECUREAUTH LABS. Copyright 2018 SecureAuth Corporation. All rights reserved.
 #
 # This software is provided under under a slightly modified version
 # of the Apache Software License. See the accompanying LICENSE file
@@ -11,7 +11,7 @@
 #
 #   Best way to learn how to use these calls is to grab the protocol standard
 #   so you understand what the call does, and then read the test case located
-#   at https://github.com/CoreSecurity/impacket/tree/master/impacket/testcases/SMB_RPC
+#   at https://github.com/SecureAuthCorp/impacket/tree/master/tests/SMB_RPC
 #
 #   Some calls have helper functions, which makes it even easier to use.
 #   They are located at the end of this file. 
@@ -35,7 +35,7 @@ class DCERPCSessionError(DCERPCException):
 
     def __str__( self ):
         key = self.error_code
-        if system_errors.ERROR_MESSAGES.has_key(key):
+        if key in system_errors.ERROR_MESSAGES:
             error_msg_short = system_errors.ERROR_MESSAGES[key][0]
             error_msg_verbose = system_errors.ERROR_MESSAGES[key][1] 
             return 'WKST SessionError: code: 0x%x - %s - %s' % (self.error_code, error_msg_short, error_msg_verbose)
@@ -127,10 +127,10 @@ class LPWKSSVC_IMPERSONATE_HANDLE(NDRPOINTER):
 # 2.2.3.1 NETSETUP_JOIN_STATUS
 class NETSETUP_JOIN_STATUS(NDRENUM):
     class enumItems(Enum):
-        NetSetupUnknownStatus = 1
-        NetSetupUnjoined      = 2
-        NetSetupWorkgroupName = 3
-        NetSetupDomainName    = 4
+        NetSetupUnknownStatus = 0
+        NetSetupUnjoined      = 1
+        NetSetupWorkgroupName = 2
+        NetSetupDomainName    = 3
 
 # 2.2.3.2 NETSETUP_NAME_TYPE
 class NETSETUP_NAME_TYPE(NDRENUM):
@@ -483,7 +483,7 @@ class JOINPR_USER_PASSWORD(NDRSTRUCT):
 # 2.2.5.18 JOINPR_ENCRYPTED_USER_PASSWORD
 class JOINPR_ENCRYPTED_USER_PASSWORD(NDRSTRUCT):
     structure = (
-        ('Buffer', '524s=""'),
+        ('Buffer', '524s=b""'),
     )
     def getAlignment(self):
         return 1
@@ -1180,4 +1180,3 @@ def hNetrUseDel(dce, useName, forceLevel=USE_LOTS_OF_FORCE):
     request['UseName'] = checkNullString(useName)
     request['ForceLevel'] = forceLevel
     return dce.request(request)
-

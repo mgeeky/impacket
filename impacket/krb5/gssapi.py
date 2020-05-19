@@ -1,4 +1,4 @@
-# Copyright (c) 2003-2016 CORE Security Technologies
+# SECUREAUTH LABS. Copyright 2018 SecureAuth Corporation. All rights reserved.
 #
 # This software is provided under under a slightly modified version
 # of the Apache Software License. See the accompanying LICENSE file
@@ -13,13 +13,22 @@
 #   RFC 3962 Partial Implementation
 
 import struct
+import random
+import string
+from six import b
 
-from Crypto.Hash import HMAC, MD5
-from Crypto.Cipher import ARC4
+from Cryptodome.Hash import HMAC, MD5
+from Cryptodome.Cipher import ARC4
 
 from impacket.structure import Structure
 from impacket.krb5 import constants, crypto
 
+# Our random number generator
+try:
+    rand = random.SystemRandom()
+except NotImplementedError:
+    rand = random
+    pass
 
 # Constants
 GSS_C_DCE_STYLE     = 0x1000
@@ -41,11 +50,13 @@ KG_USAGE_ACCEPTOR_SIGN  = 23
 KG_USAGE_INITIATOR_SEAL = 24
 KG_USAGE_INITIATOR_SIGN = 25
 
+KRB5_AP_REQ = struct.pack('<H', 0x1)
+
 # 1.1.1. Initial Token - Checksum field
 class CheckSumField(Structure):
     structure = (
         ('Lgth','<L=16'),
-        ('Bnd','16s=""'),
+        ('Bnd','16s=b""'),
         ('Flags','<L=0'),
     )
 
@@ -67,8 +78,8 @@ class GSSAPI_RC4:
             ('TOK_ID','<H=0x0101'),
             ('SGN_ALG','<H=0'),
             ('Filler','<L=0xffffffff'),
-            ('SND_SEQ','8s=""'),
-            ('SGN_CKSUM','8s=""'),
+            ('SND_SEQ','8s=b""'),
+            ('SGN_CKSUM','8s=b""'),
         )
 
     # 1.2.2. Per-message Tokens - Wrap
@@ -78,28 +89,28 @@ class GSSAPI_RC4:
             ('SGN_ALG','<H=0'),
             ('SEAL_ALG','<H=0'),
             ('Filler','<H=0xffff'),
-            ('SND_SEQ','8s=""'),
-            ('SGN_CKSUM','8s=""'),
-            ('Confounder','8s=""'),
+            ('SND_SEQ','8s=b""'),
+            ('SGN_CKSUM','8s=b""'),
+            ('Confounder','8s=b""'),
         )
 
     def GSS_GetMIC(self, sessionKey, data, sequenceNumber, direction = 'init'):
-        GSS_GETMIC_HEADER = '\x60\x23\x06\x09\x2a\x86\x48\x86\xf7\x12\x01\x02\x02'
+        GSS_GETMIC_HEADER = b'\x60\x23\x06\x09\x2a\x86\x48\x86\xf7\x12\x01\x02\x02'
         token = self.MIC()
 
         # Let's pad the data
         pad = (4 - (len(data) % 4)) & 0x3
-        padStr = chr(pad) * pad
+        padStr = b(chr(pad)) * pad
         data += padStr
  
         token['SGN_ALG'] = GSS_HMAC
         if direction == 'init':
-            token['SND_SEQ'] = struct.pack('>L', sequenceNumber) + '\x00'*4
+            token['SND_SEQ'] = struct.pack('>L', sequenceNumber) + b'\x00'*4
         else:
-            token['SND_SEQ'] = struct.pack('>L', sequenceNumber) + '\xff'*4
+            token['SND_SEQ'] = struct.pack('>L', sequenceNumber) + b'\xff'*4
 
-        Ksign = HMAC.new(sessionKey.contents, 'signaturekey\0', MD5).digest()
-        Sgn_Cksum = MD5.new( struct.pack('<L',15) + str(token)[:8] + data).digest()
+        Ksign = HMAC.new(sessionKey.contents, b'signaturekey\0', MD5).digest()
+        Sgn_Cksum = MD5.new( struct.pack('<L',15) + token.getData()[:8] + data).digest()
         Sgn_Cksum = HMAC.new(Ksign, Sgn_Cksum, MD5).digest()
         token['SGN_CKSUM'] = Sgn_Cksum[:8]
 
@@ -114,31 +125,33 @@ class GSSAPI_RC4:
         # https://social.msdn.microsoft.com/Forums/en-US/fb98e8f4-e697-4652-bcb7-604e027e14cc/gsswrap-token-size-kerberos-and-rc4hmac?forum=os_windowsprotocols
         # and here
         # http://www.rfc-editor.org/errata_search.php?rfc=4757
-        GSS_WRAP_HEADER = '\x60\x2b\x06\x09\x2a\x86\x48\x86\xf7\x12\x01\x02\x02'
+        GSS_WRAP_HEADER = b'\x60\x2b\x06\x09\x2a\x86\x48\x86\xf7\x12\x01\x02\x02'
         token = self.WRAP()
 
         # Let's pad the data
         pad = (8 - (len(data) % 8)) & 0x7
-        padStr = chr(pad) * pad
+        padStr = b(chr(pad)) * pad
         data += padStr
 
         token['SGN_ALG'] = GSS_HMAC
         token['SEAL_ALG'] = GSS_RC4
 
         if direction == 'init':
-            token['SND_SEQ'] = struct.pack('>L', sequenceNumber) + '\x00'*4
+            token['SND_SEQ'] = struct.pack('>L', sequenceNumber) + b'\x00'*4
         else:
-            token['SND_SEQ'] = struct.pack('>L', sequenceNumber) + '\xff'*4
+            token['SND_SEQ'] = struct.pack('>L', sequenceNumber) + b'\xff'*4
 
         # Random confounder :)
-        token['Confounder'] = '12345678'
+        token['Confounder'] = b(''.join([rand.choice(string.ascii_letters) for _ in range(8)]))
 
-        Ksign = HMAC.new(sessionKey.contents, 'signaturekey\0', MD5).digest()
-        Sgn_Cksum = MD5.new(struct.pack('<L',13) + str(token)[:8] + token['Confounder'] + data).digest()
-        Klocal = ''
-        for n in sessionKey.contents:
-            Klocal +=  chr(ord(n) ^ 0xF0)
- 
+        Ksign = HMAC.new(sessionKey.contents, b'signaturekey\0', MD5).digest()
+        Sgn_Cksum = MD5.new(struct.pack('<L',13) + token.getData()[:8] + token['Confounder'] + data).digest()
+
+        Klocal = bytearray()
+        from builtins import bytes
+        for n in bytes(sessionKey.contents):
+            Klocal.append( n ^ 0xF0)
+
         Kcrypt = HMAC.new(Klocal,struct.pack('<L',0), MD5).digest()
         Kcrypt = HMAC.new(Kcrypt,struct.pack('>L', sequenceNumber), MD5).digest()
         
@@ -188,8 +201,8 @@ class GSSAPI_AES():
             ('Flags','B=0'),
             ('Filler0','B=0xff'),
             ('Filler','>L=0xffffffff'),
-            ('SND_SEQ','8s=""'),
-            ('SGN_CKSUM','12s=""'),
+            ('SND_SEQ','8s=b""'),
+            ('SGN_CKSUM','12s=b""'),
         )
 
     # 1.2.2. Per-message Tokens - Wrap
@@ -200,7 +213,7 @@ class GSSAPI_AES():
             ('Filler','B=0xff'),
             ('EC','>H=0'),
             ('RRC','>H=0'),
-            ('SND_SEQ','8s=""'),
+            ('SND_SEQ','8s=b""'),
         )
 
     def GSS_GetMIC(self, sessionKey, data, sequenceNumber, direction = 'init'):
@@ -237,7 +250,7 @@ class GSSAPI_AES():
 
         # Let's pad the data
         pad = (cipher.blocksize - (len(data) % cipher.blocksize)) & 15
-        padStr = '\xFF' * pad
+        padStr = b'\xFF' * pad
         data += padStr
 
         # The RRC field ([RFC4121] section 4.2.5) is 12 if no encryption is requested or 28 if encryption 
@@ -254,7 +267,7 @@ class GSSAPI_AES():
 
         cipherText = self.rotate(cipherText, token['RRC'] + token['EC'])
 
-        nn = self.unrotate(cipherText, token['RRC'] + token['EC'])
+        #nn = self.unrotate(cipherText, token['RRC'] + token['EC'])
         ret1 = cipherText[len(self.WRAP()) + token['RRC'] + token['EC']:]
         ret2 = token.getData() + cipherText[:len(self.WRAP()) + token['RRC'] + token['EC']]
 

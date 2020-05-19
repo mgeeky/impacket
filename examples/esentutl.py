@@ -1,5 +1,5 @@
-#!/usr/bin/python
-# Copyright (c) 2003-2016 CORE Security Technologies
+#!/usr/bin/env python
+# SECUREAUTH LABS. Copyright 2018 SecureAuth Corporation. All rights reserved.
 #
 # This software is provided under under a slightly modified version
 # of the Apache Software License. See the accompanying LICENSE file
@@ -15,7 +15,8 @@
 # Reference for:
 #  Extensive Storage Engine (ese)
 # 
-
+from __future__ import division
+from __future__ import print_function
 import sys
 import logging
 import argparse
@@ -36,28 +37,30 @@ def exportTable(ese, tableName):
         return
 
     i = 1
-    print "Table: %s" % tableName
+    print("Table: %s" % tableName)
     while True:
         try:
             record = ese.getNextRow(cursor)
-        except:
+        except Exception:
+            logging.debug('Exception:', exc_info=True)
             logging.error('Error while calling getNextRow(), trying the next one')
             continue
 
         if record is None:
             break
-        print "*** %d" % i
-        for j in record.keys():
+        print("*** %d" % i)
+        for j in list(record.keys()):
            if record[j] is not None:
-               print "%-30s: %r" % (j, record[j])
+               print("%-30s: %r" % (j, record[j]))
         i += 1
 
 def main():
-    print version.BANNER
+    print(version.BANNER)
     # Init the example's logger theme
     logger.init()
 
-    parser = argparse.ArgumentParser(add_help = True, description = "Extensive Storage Engine utility. Allows dumping catalog, pages and tables.")
+    parser = argparse.ArgumentParser(add_help = True, description = "Extensive Storage Engine utility. Allows dumping "
+                                                                    "catalog, pages and tables.")
     parser.add_argument('databaseFile', action='store', help='ESE to open')
     parser.add_argument('-debug', action='store_true', help='Turn DEBUG output ON')
     parser.add_argument('-page', action='store', help='page to open')
@@ -83,6 +86,8 @@ def main():
 
     if options.debug is True:
         logging.getLogger().setLevel(logging.DEBUG)
+        # Print the Library's installation path
+        logging.debug(version.getInstallationPath())
     else:
         logging.getLogger().setLevel(logging.INFO)
 
@@ -96,18 +101,15 @@ def main():
         elif options.action.upper() == 'EXPORT':
             exportTable(ese, options.table)
         else:
-            logging.error('Unknown action %s ' % options.action)
-            raise
-    except Exception, e:
-        #import traceback
-        #print traceback.print_exc()
-        print e
+            raise Exception('Unknown action %s ' % options.action)
+    except Exception as e:
+        if logging.getLogger().level == logging.DEBUG:
+            import traceback
+            traceback.print_exc()
+        print(e)
     ese.close()
 
 
 if __name__ == '__main__':
     main()
     sys.exit(1)
-
-
-

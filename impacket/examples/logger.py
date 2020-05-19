@@ -1,5 +1,4 @@
-#!/usr/bin/python
-# Copyright (c) 2003-2016 CORE Security Technologies
+# SECUREAUTH LABS. Copyright 2018 SecureAuth Corporation. All rights reserved.
 #
 # This software is provided under under a slightly modified version
 # of the Apache Software License. See the accompanying LICENSE file
@@ -37,11 +36,24 @@ class ImpacketFormatter(logging.Formatter):
     else:
       record.bullet = '[-]'
 
-    return logging.Formatter.format(self, record)    
+    return logging.Formatter.format(self, record)
 
-def init():
+class ImpacketFormatterTimeStamp(ImpacketFormatter):
+  '''
+  Prefixing logged messages through the custom attribute 'bullet'.
+  '''
+  def __init__(self):
+      logging.Formatter.__init__(self,'[%(asctime)-15s] %(bullet)s %(message)s', None)
+
+  def formatTime(self, record, datefmt=None):
+      return ImpacketFormatter.formatTime(self, record, datefmt="%Y-%m-%d %H:%M:%S")
+
+def init(ts=False):
     # We add a StreamHandler and formatter to the root logger
     handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(ImpacketFormatter())
+    if not ts:
+        handler.setFormatter(ImpacketFormatter())
+    else:
+        handler.setFormatter(ImpacketFormatterTimeStamp())
     logging.getLogger().addHandler(handler)
     logging.getLogger().setLevel(logging.INFO)
